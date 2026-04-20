@@ -14,6 +14,18 @@
             "preLaunchTask": "Build yquake2"
         },
         {
+            "name": "Debug yquake2 + MCP (RelWithDebInfo)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/release/RelWithDebInfo/yquake2.exe",
+            "args": ["+set", "mcp_server_port", "28910"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/release/RelWithDebInfo",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build yquake2"
+        },
+        {
             "name": "Debug q2ded (dedicated server)",
             "type": "cppvsdbg",
             "request": "launch",

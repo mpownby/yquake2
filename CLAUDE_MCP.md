@@ -1,7 +1,20 @@
 # CLAUDE_MCP.md
 
-The MCP (Model Context Protocol) bridge that lets Claude drive the running
-yquake2 client. Status: working end-to-end on Windows + gl1 renderer.
+The MCP (Model Context Protocol) bridges that let Claude drive the
+running yquake2 client and the running Roblox Studio instance. Both are
+registered in [.mcp.json](.mcp.json) so they load as project-scoped MCP
+servers.
+
+| Server          | What it drives              | Status                                 |
+|-----------------|-----------------------------|----------------------------------------|
+| `yquake2`       | yquake2 client              | Working end-to-end, gl1 renderer only  |
+| `roblox_studio` | Roblox Studio (any running) | Official Roblox MCP, ships with Studio |
+
+---
+
+## Track 1 — yquake2
+
+Working end-to-end on Windows + gl1 renderer.
 
 ## Architecture
 
@@ -156,3 +169,59 @@ print(json.loads(data.decode().splitlines()[0]))
   testing.
 - **`q2_get_state` is stubbed.** Add by capturing `where` output and
   parsing the printed fields.
+
+---
+
+## Track 2 — Roblox Studio
+
+Roblox ships the official MCP server bundled with Studio:
+
+- Binary: `%LOCALAPPDATA%\Roblox\Versions\version-*\StudioMCP.exe`
+- Version-independent launcher: `%LOCALAPPDATA%\Roblox\mcp.bat`
+- Companion Studio plugin: `%LOCALAPPDATA%\Roblox\Plugins\MCPStudioPlugin.rbxm`
+  (must be enabled inside Studio for tools to respond)
+
+`.mcp.json` invokes the launcher over stdio:
+```json
+"roblox_studio": {
+    "command": "cmd",
+    "args": ["/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat", "--stdio"]
+}
+```
+
+### Available tools (verified via [mcp/probe_roblox.py](mcp/probe_roblox.py))
+
+The server advertises `protocolVersion: 2024-11-05` and the following
+tools (names as reported by `tools/list`):
+
+- **Scene inspection**: `search_game_tree`, `inspect_instance`
+- **Script work**: `script_search`, `script_read`, `script_grep`,
+  `multi_edit`
+- **Execution**: `execute_luau`, `start_stop_play`, `subagent`
+- **Creation**: `generate_mesh`, `generate_material`,
+  `insert_from_creator_store`
+- **Camera / input**: `character_navigation`, `user_mouse_input`,
+  `user_keyboard_input`
+- **Capture**: `screen_capture`, `get_console_output`
+- **Multi-Studio**: `list_roblox_studios`, `set_active_studio`
+
+`screen_capture` + `execute_luau` are the two that matter for the
+bsp2rbx feedback loop: load a converted `.rbxlx`, screenshot the Studio
+viewport, compare against a `q2_screenshot` of the same vantage in
+yquake2, iterate.
+
+### Probe / sanity check
+
+Run [mcp/probe_roblox.py](mcp/probe_roblox.py) with Studio open and the
+MCPStudioPlugin enabled. It sends `initialize` + `tools/list` and prints
+the server's responses. Handy for verifying the pipe is live without
+round-tripping through Claude Code.
+
+### Known limitations
+
+- Requires Studio running *and* the MCPStudioPlugin enabled in it. With
+  Studio closed or the plugin disabled, `tools/list` still succeeds but
+  tool calls error out.
+- `mcp.bat` resolves the latest installed Studio version at each invoke;
+  fine in practice but means each Claude Code session binds to whatever
+  Studio was most recently installed.

@@ -4,3 +4,11 @@
 *.mk
 *.user
 *.d
+
+# Python (q2_bridge)
+__pycache__/
+*.pyc
+*.egg-info/
+
+# bsp2rbx converter output
+*.rbxlx

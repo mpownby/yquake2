@@ -9,7 +9,12 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # CMake project configuration.
-project(yquake2 C)
+project(yquake2 C CXX)
+
+option(YQ2_BUILD_TOOLS "Build helper tools (bsp2rbx, ...)" ON)
+if(YQ2_BUILD_TOOLS)
+	enable_testing()
+endif()
 
 # Cmake module search path.
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/stuff/cmake/modules ${CMAKE_MODULE_PATH})
@@ -900,4 +905,8 @@ if(SDL3_SUPPORT)
 	target_link_libraries(ref_gles1 SDL3::SDL3)
 endif()
 
+endif()
+
+if(YQ2_BUILD_TOOLS)
+	add_subdirectory(tools/bsp2rbx)
 endif()

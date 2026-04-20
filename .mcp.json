@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "yquake2": {
+      "command": "python",
+      "args": ["-m", "q2_bridge.server"],
+      "env": {
+        "Q2_MCP_HOST": "127.0.0.1",
+        "Q2_MCP_PORT": "28910"
+      }
+    },
+    "roblox_studio": {
+      "command": "cmd",
+      "args": ["/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat", "--stdio"]
+    }
+  }
+}

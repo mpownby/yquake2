@@ -5,6 +5,41 @@ forward so a fresh session can pick up where the last one left off.
 
 Last updated: 2026-04-19.
 
+## Done — bsp2rbx milestone 1 (track 2)
+
+Scaffolded and green on Windows + MSVC. All 31 unit tests pass; the
+env-gated demo1 e2e test is wired but skips unless `YQ2_TEST_BASEQ2` is
+set. Tool runs end-to-end on a real map:
+`base64.bsp` (5.8 MB) -> `base64.rbxlx` (2.9 MB, 5424 solid brush parts).
+
+**Tool code** at [tools/bsp2rbx/](tools/bsp2rbx/):
+- Interfaces: `IFileReader`, `IFileWriter`, `IBspParser`, `IBrushGeometry`,
+  `IBrushFilter`, `IRobloxXmlWriter`.
+- Production: `FileReader`, `FileWriter`, `BspParser`, `BrushGeometry`
+  (plane-intersection, AABB), `SolidWorldspawnFilter`, `RobloxXmlWriter`.
+- Orchestrator: `BspConverter` (constructor-injected, all collaborators
+  behind interfaces).
+- [tools/bsp2rbx/src/main.cpp](tools/bsp2rbx/src/main.cpp) — CLI parse +
+  DI wiring, flags `--mode=aabb|mesh`, `--scale=<f>`, `--worldspawn-only`.
+- Mocks in [tools/bsp2rbx/tests/mocks/](tools/bsp2rbx/tests/mocks/).
+- Per-class tests in [tools/bsp2rbx/tests/](tools/bsp2rbx/tests/).
+
+**Root wiring** ([CMakeLists.txt](CMakeLists.txt)):
+`option(YQ2_BUILD_TOOLS ON)` → `enable_testing()` +
+`add_subdirectory(tools/bsp2rbx)`. Project language now `C CXX`.
+
+**Build / run**:
+```
+<vs-cmake> -G "Visual Studio 17 2022" -A x64 -DSDL3_SUPPORT=OFF \
+  -DYQUAKE2LIBS=<...>/x86_64-w64-mingw32/ -S . -B build
+<vs-cmake> --build build --config RelWithDebInfo --target bsp2rbx
+<vs-ctest> --test-dir build --output-on-failure -C RelWithDebInfo
+```
+
+**Next** (milestone 2): emit `MeshPart` with convex-hull mesh for
+non-AABB brushes once milestone 1 has been eyeballed in Roblox Studio
+against a Q2 reference screenshot via the MCP bridge.
+
 ## Done — MCP autonomy loop (track 1)
 
 End-to-end verified on Windows + MSVC. Claude can drive a running yquake2
@@ -46,23 +81,6 @@ the `refexport_t` ABI bump):
   proper JSON errors
 
 See [CLAUDE_MCP.md](CLAUDE_MCP.md) for full details.
-
-## Not yet done — bsp2rbx converter (track 2)
-
-Track 1 is complete; track 2 hasn't been started. The plan is fully
-designed in [CLAUDE_CONVERTER.md](CLAUDE_CONVERTER.md).
-
-**Next concrete steps** when picking this up:
-1. Scaffold `tools/bsp2rbx/` with `CMakeLists.txt` and `FetchContent` for
-   GoogleTest+GoogleMock.
-2. Wire `option(YQ2_BUILD_TOOLS "Build helper tools" ON)` in root
-   `CMakeLists.txt` and `add_subdirectory(tools/bsp2rbx)`.
-3. Implement the interfaces, production impls, and one mock+test per
-   class in DI order (start with `IFileReader` — simplest, then build up).
-4. CLI parser in `main.cpp` constructs the dependency graph and invokes
-   `BspConverter::convert`.
-5. Convert `baseq2/maps/demo1.bsp` to `demo1.rbxlx`, eyeball-import in
-   Roblox Studio.
 
 ## Known follow-ups (small, not blocking)
 
