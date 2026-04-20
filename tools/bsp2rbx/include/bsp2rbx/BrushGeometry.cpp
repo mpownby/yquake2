@@ -377,15 +377,27 @@ BrushObb BrushGeometry::brushObb(const Bsp& bsp, int brushIndex) {
 
     const auto candidates = candidateTriples(axes);
 
-    // Minimum-volume OBB wins. This is what lets the converter recognize a
-    // tilted slab (bridge support, chamfered beam) as a rotated thin box
-    // instead of bloating it into its axis-aligned bounding box.
-    float bestVol = std::numeric_limits<float>::infinity();
+    // Pick the best candidate: smallest volume, tie-broken by thinnest axis.
+    // The tie-breaker matters for triangular-prism / chamfer brushes, where
+    // the AABB and the hypotenuse-aligned OBB have the same volume but the
+    // rotated OBB has a thinner slab axis — which visually represents the
+    // chamfer cut in Studio instead of the AABB's fat rectangular filler.
+    float bestVol  = std::numeric_limits<float>::infinity();
+    float bestThin = std::numeric_limits<float>::infinity();
     Vec3 ax0{1,0,0}, ax1{0,1,0}, ax2{0,0,1};
     for (const auto& t : candidates) {
-        const float v = obbVolume(verts, t[0], t[1], t[2]);
-        if (v < bestVol - 1e-4f) {
-            bestVol = v;
+        std::array<float, 3> c{};
+        std::array<float, 3> sz{};
+        fitObbToVerts(verts, t[0], t[1], t[2], c, sz);
+        const float vol  = sz[0] * sz[1] * sz[2];
+        const float thin = std::min({ sz[0], sz[1], sz[2] });
+
+        const float volRatio = bestVol > 0 ? vol / bestVol : 1.0f;
+        const bool strictlySmaller = vol < bestVol - 1e-4f;
+        const bool tied = !strictlySmaller && volRatio < 1.01f;
+        if (strictlySmaller || (tied && thin < bestThin - 1e-4f)) {
+            bestVol  = vol;
+            bestThin = thin;
             ax0 = t[0]; ax1 = t[1]; ax2 = t[2];
         }
     }

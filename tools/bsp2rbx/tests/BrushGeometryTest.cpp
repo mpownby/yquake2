@@ -196,38 +196,53 @@ TEST(BrushGeometryTest, Obb45DegRotatedBoxProducesRotatedFrame) {
     EXPECT_NEAR(std::fabs(obb.rotation[4]), s, 1e-4f);
 }
 
-TEST(BrushGeometryTest, ObbTriangularPrismFallsBackToAabbIdentity) {
-    // A 45° ramp / triangular prism: 5 face planes, no orthogonal triple
-    // among the face normals that isn't just the world axes. Expect fallback
-    // to AABB behavior with identity rotation.
-    //  Base rectangle z=0, walls at x=0 and y in [-1,1], top slanted plane
-    //  going from (0, *, 2) down to (2, *, 0): normal = (1, 0, 1)/√2
+TEST(BrushGeometryTest, ObbTriangularPrismPicksHypotenuseAlignedSlab) {
+    // 45° triangular prism (ramp / corner-chamfer): base rectangle z=0, back
+    // wall at x=0, side walls at y ∈ [-1, 1], slanted top (x + z)/√2 ≤ √2.
+    //
+    // The AABB (axis-aligned) has size (2, 2, 2) -> volume 8, min extent 2.
+    // The hypotenuse-aligned OBB has size (2√2, 2, √2) -> same volume 8 but
+    // min extent √2 ≈ 1.414. With equal volume, the tie-breaker prefers the
+    // thinner-axis orientation because visually it represents the chamfer as
+    // a thin slanted slab instead of a fat rectangular filler — which is what
+    // the human observer sees in Q2's rendering of the cut corner.
     Bsp bsp;
     const float r2 = std::sqrt(2.0f) / 2.0f;
     const int bi = addCustomBrush(bsp, {
-        {  0,  0, -1, 0 },   // bottom (z >= 0)
-        { -1,  0,  0, 0 },   // back (x >= 0)
-        {  0, -1,  0, 1 },   // south (y >= -1)
-        {  0,  1,  0, 1 },   // north (y <= 1)
-        { r2,  0, r2, r2*2 },// slanted top: (x + z)/√2 <= √2 -> x + z <= 2
+        {  0,  0, -1, 0 },
+        { -1,  0,  0, 0 },
+        {  0, -1,  0, 1 },
+        {  0,  1,  0, 1 },
+        { r2,  0, r2, r2*2 },
     });
 
     BrushGeometry geom;
     const BrushObb obb = geom.brushObb(bsp, bi);
 
-    // Falls back to AABB: x in [0,2], y in [-1,1], z in [0,2]
-    // (no orthogonal triple among face normals — slanted plane breaks it)
-    EXPECT_NEAR(obb.center[0], 1.0f, 1e-4f);
-    EXPECT_NEAR(obb.center[1], 0.0f, 1e-4f);
-    EXPECT_NEAR(obb.center[2], 1.0f, 1e-4f);
-    EXPECT_NEAR(obb.size[0], 2.0f, 1e-4f);
-    EXPECT_NEAR(obb.size[1], 2.0f, 1e-4f);
-    EXPECT_NEAR(obb.size[2], 2.0f, 1e-4f);
+    // Min extent must be √2 (the slab thickness), not 2 (AABB).
+    const float minSize = std::min({ obb.size[0], obb.size[1], obb.size[2] });
+    EXPECT_NEAR(minSize, std::sqrt(2.0f), 1e-3f)
+        << "expected slab-thickness √2, got sizes "
+        << obb.size[0] << ", " << obb.size[1] << ", " << obb.size[2];
 
+    // Rotation must NOT be identity — tie-breaker chose rotated orientation.
     const std::array<float, 9> identity = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
-    for (int i = 0; i < 9; ++i) {
-        EXPECT_NEAR(obb.rotation[i], identity[i], 1e-4f) << "rotation[" << i << "]";
-    }
+    float deviation = 0.0f;
+    for (int i = 0; i < 9; ++i) deviation += std::fabs(obb.rotation[i] - identity[i]);
+    EXPECT_GT(deviation, 0.1f)
+        << "rotation is identity — tie-breaker failed to pick the slanted slab";
+
+    // Y axis extent stays 2 (the prism length; unaffected by the XZ rotation).
+    // Verify y is one of the three sizes.
+    bool yAxisPresent =
+        std::fabs(obb.size[0] - 2.0f) < 1e-3f ||
+        std::fabs(obb.size[1] - 2.0f) < 1e-3f ||
+        std::fabs(obb.size[2] - 2.0f) < 1e-3f;
+    EXPECT_TRUE(yAxisPresent) << "expected one axis of extent 2 (prism length)";
+
+    // Volume must still match: 2√2 * 2 * √2 = 8.
+    const float vol = obb.size[0] * obb.size[1] * obb.size[2];
+    EXPECT_NEAR(vol, 8.0f, 1e-2f);
 }
 
 TEST(BrushGeometryTest, ObbRotationIsOrthonormalAndRightHanded) {
