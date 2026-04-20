@@ -180,6 +180,29 @@ Gotchas observed in practice:
   noclip because the movement code re-derives `v_angle` from input.
   Yaw holds fine; for precise pitch, use `setforward` instead.
 
+**Stay inside the playable volume.** Noclip exists to fly around the
+map freely — not to escape it. Teleporting outside the world or into a
+solid wall is an easy mistake when guessing coordinates:
+
+- A bright solid-orange screen (sky, gun, HUD all tinted) is the
+  "leak" color yquake2 draws when the eye is outside any BSP leaf. If
+  you see orange with no visible geometry, you're outside the map —
+  re-teleport inward.
+- A bright-red/orange *wash* that still shows geometry through it means
+  the eye is *inside* a lava/water contents brush (or standing in
+  lava). Still inside the map, but the view is tinted and the player is
+  taking damage — fine for exploration, but clip out to get clean
+  reference shots.
+- Map bounds come from `dmodel_t[0]`'s mins/maxs in the BSP (see the
+  recon Python in session history). For `battle.bsp`: x ∈ [-1862,
+  1032], y ∈ [-1608, 392], z ∈ [-72, 776]. But those are the bounding
+  box of all worldspawn brushes — not every point inside the box is
+  inside a room. Prefer positions near known-good spawn points
+  (`info_player_deathmatch` entries in the `entityString`).
+- When you're unsure, `cmd where` after teleporting and inspect the
+  screenshot: if the view is flat orange or clearly inside a wall,
+  teleport back to a known good spot before continuing.
+
 ## Smoke test (no Claude Code, just Python + TCP)
 
 ```python

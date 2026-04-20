@@ -10,6 +10,7 @@
 #include "bsp2rbx/FileWriter.h"
 #include "bsp2rbx/RobloxXmlWriter.h"
 #include "bsp2rbx/SolidWorldspawnFilter.h"
+#include "bsp2rbx/WorldspawnBrushSet.h"
 
 namespace bsp2rbx {
 namespace {
@@ -26,14 +27,15 @@ TEST(Demo1ConversionTest, ConvertsDemo1WhenBaseq2Available) {
     const std::filesystem::path out =
         std::filesystem::temp_directory_path() / "bsp2rbx_demo1.rbxlx";
 
-    auto reader = std::make_shared<FileReader>();
-    auto parser = std::make_shared<BspParser>();
-    auto geom   = std::make_shared<BrushGeometry>();
-    auto filter = std::make_shared<SolidWorldspawnFilter>();
-    auto xml    = std::make_shared<RobloxXmlWriter>();
-    auto writer = std::make_shared<FileWriter>();
+    auto reader     = std::make_shared<FileReader>();
+    auto parser     = std::make_shared<BspParser>();
+    auto worldspawn = std::make_shared<WorldspawnBrushSet>();
+    auto geom       = std::make_shared<BrushGeometry>();
+    auto filter     = std::make_shared<SolidWorldspawnFilter>();
+    auto xml        = std::make_shared<RobloxXmlWriter>();
+    auto writer     = std::make_shared<FileWriter>();
 
-    BspConverter c(reader, parser, geom, filter, xml, writer);
+    BspConverter c(reader, parser, worldspawn, geom, filter, xml, writer);
     c.convert(bsp, out, 0.0254f);
 
     EXPECT_TRUE(std::filesystem::exists(out));

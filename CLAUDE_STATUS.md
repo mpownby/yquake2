@@ -7,22 +7,42 @@ Last updated: 2026-04-19.
 
 ## Done — bsp2rbx milestone 1 (track 2)
 
-Scaffolded and green on Windows + MSVC. All 31 unit tests pass; the
-env-gated demo1 e2e test is wired but skips unless `YQ2_TEST_BASEQ2` is
-set. Tool runs end-to-end on a real map:
-`base64.bsp` (5.8 MB) -> `base64.rbxlx` (2.9 MB, 5424 solid brush parts).
+Scaffolded and green on Windows + MSVC. **40 unit tests pass** (31
+original + 7 WorldspawnBrushSet + 1 BspConverter regression + BspParser
+nodes/leaves/leafbrushes); env-gated demo1 e2e test is wired but skips
+unless `YQ2_TEST_BASEQ2` is set. Tool runs end-to-end on
+`battle.bsp` (0.4 MB) -> `battle.rbxlx` (203 KB, 374 solid worldspawn
+parts) and `base64.bsp` (5.8 MB) -> `base64.rbxlx` (2.9 MB, 5424 parts).
 
 **Tool code** at [tools/bsp2rbx/](tools/bsp2rbx/):
-- Interfaces: `IFileReader`, `IFileWriter`, `IBspParser`, `IBrushGeometry`,
-  `IBrushFilter`, `IRobloxXmlWriter`.
-- Production: `FileReader`, `FileWriter`, `BspParser`, `BrushGeometry`
-  (plane-intersection, AABB), `SolidWorldspawnFilter`, `RobloxXmlWriter`.
+- Interfaces: `IFileReader`, `IFileWriter`, `IBspParser`,
+  `IWorldspawnBrushSet`, `IBrushGeometry`, `IBrushFilter`,
+  `IRobloxXmlWriter`.
+- Production: `FileReader`, `FileWriter`, `BspParser`,
+  `WorldspawnBrushSet` (walks model 0's node tree to collect owned brush
+  indices — prevents brush-entity brushes from leaking into worldspawn),
+  `BrushGeometry` (plane-intersection, AABB), `SolidWorldspawnFilter`,
+  `RobloxXmlWriter`.
 - Orchestrator: `BspConverter` (constructor-injected, all collaborators
   behind interfaces).
 - [tools/bsp2rbx/src/main.cpp](tools/bsp2rbx/src/main.cpp) — CLI parse +
   DI wiring, flags `--mode=aabb|mesh`, `--scale=<f>`, `--worldspawn-only`.
 - Mocks in [tools/bsp2rbx/tests/mocks/](tools/bsp2rbx/tests/mocks/).
 - Per-class tests in [tools/bsp2rbx/tests/](tools/bsp2rbx/tests/).
+
+## Fixed defects (from recon passes)
+
+1. **Brush-entity brushes emitted as static worldspawn parts.** The
+   converter iterated all brushes in the BSP, but a BSP's brushes lump
+   is shared across model 0 (worldspawn) and models 1+ (brush-entities
+   like doors, movers, platforms). Those were being emitted at their
+   compiled positions as static walls. Fix: new `IWorldspawnBrushSet` /
+   `WorldspawnBrushSet` walks model 0's node tree (via the newly parsed
+   nodes, leaves, leafbrushes lumps) and returns the set of brush
+   indices reachable from it; `BspConverter` skips anything outside that
+   set. On `battle.bsp`, dropped 5 parts (4 doors + 1 orphan brush with
+   no model reference): 379 -> 374. Regression test:
+   `BspConverterTest.SkipsBrushesNotInWorldspawnSetEvenIfFilterWouldKeep`.
 
 **Root wiring** ([CMakeLists.txt](CMakeLists.txt)):
 `option(YQ2_BUILD_TOOLS ON)` → `enable_testing()` +

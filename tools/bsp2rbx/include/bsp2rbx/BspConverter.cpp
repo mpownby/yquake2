@@ -22,14 +22,16 @@ std::array<uint8_t, 3> colorFromTexname(const std::string& name) {
 
 } // namespace
 
-BspConverter::BspConverter(std::shared_ptr<IFileReader>      reader,
-                           std::shared_ptr<IBspParser>       parser,
-                           std::shared_ptr<IBrushGeometry>   geometry,
-                           std::shared_ptr<IBrushFilter>     filter,
-                           std::shared_ptr<IRobloxXmlWriter> xml,
-                           std::shared_ptr<IFileWriter>      writer)
+BspConverter::BspConverter(std::shared_ptr<IFileReader>         reader,
+                           std::shared_ptr<IBspParser>          parser,
+                           std::shared_ptr<IWorldspawnBrushSet> worldspawn,
+                           std::shared_ptr<IBrushGeometry>      geometry,
+                           std::shared_ptr<IBrushFilter>        filter,
+                           std::shared_ptr<IRobloxXmlWriter>    xml,
+                           std::shared_ptr<IFileWriter>         writer)
     : reader_(std::move(reader)),
       parser_(std::move(parser)),
+      worldspawn_(std::move(worldspawn)),
       geometry_(std::move(geometry)),
       filter_(std::move(filter)),
       xml_(std::move(xml)),
@@ -40,10 +42,12 @@ void BspConverter::convert(const std::filesystem::path& inBsp,
                            float scale) {
     auto bytes = reader_->read(inBsp);
     auto bsp   = parser_->parse(bytes);
+    const auto worldspawn = worldspawn_->compute(*bsp);
 
     xml_->beginDocument();
     const int count = static_cast<int>(bsp->brushes.size());
     for (int i = 0; i < count; ++i) {
+        if (worldspawn.count(i) == 0) continue;
         if (!filter_->keep(*bsp, i)) continue;
         const BrushAabb a = geometry_->brushAabb(*bsp, i);
         RobloxPart part{};

@@ -28,6 +28,7 @@ set(BSP2RBX_SOURCES
     include/bsp2rbx/BspParser.cpp
     include/bsp2rbx/BrushGeometry.cpp
     include/bsp2rbx/SolidWorldspawnFilter.cpp
+    include/bsp2rbx/WorldspawnBrushSet.cpp
     include/bsp2rbx/RobloxXmlWriter.cpp
     include/bsp2rbx/BspConverter.cpp
 )

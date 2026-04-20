@@ -16,6 +16,8 @@ static_assert(sizeof(dmodel_t)     == 48,              "dmodel_t layout");
 static_assert(sizeof(dface_t)      == 20,              "dface_t layout");
 static_assert(sizeof(dedge_t)      == 4,               "dedge_t layout");
 static_assert(sizeof(texinfo_t)    == 76,              "texinfo_t layout");
+static_assert(sizeof(dnode_t)      == 28,              "dnode_t layout");
+static_assert(sizeof(dleaf_t)      == 28,              "dleaf_t layout");
 
 template <class T>
 std::vector<T> copyLump(const std::vector<uint8_t>& bytes, const lump_t& lump, const char* name) {
@@ -63,6 +65,9 @@ std::unique_ptr<Bsp> BspParser::parse(const std::vector<uint8_t>& bytes) {
     bsp->edges      = copyLump<dedge_t>     (bytes, header.lumps[LUMP_EDGES],      "edges");
     bsp->surfedges  = copyLump<int>         (bytes, header.lumps[LUMP_SURFEDGES],  "surfedges");
     bsp->texinfos   = copyLump<texinfo_t>   (bytes, header.lumps[LUMP_TEXINFO],    "texinfo");
+    bsp->nodes      = copyLump<dnode_t>     (bytes, header.lumps[LUMP_NODES],      "nodes");
+    bsp->leaves     = copyLump<dleaf_t>     (bytes, header.lumps[LUMP_LEAFS],      "leaves");
+    bsp->leafbrushes= copyLump<uint16_t>    (bytes, header.lumps[LUMP_LEAFBRUSHES],"leafbrushes");
 
     const lump_t& ents = header.lumps[LUMP_ENTITIES];
     if (ents.filelen < 0 || ents.fileofs < 0 ||

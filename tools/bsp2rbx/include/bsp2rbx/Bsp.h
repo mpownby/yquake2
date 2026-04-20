@@ -20,6 +20,9 @@ struct Bsp {
     std::vector<dedge_t>      edges;
     std::vector<int>          surfedges;
     std::vector<texinfo_t>    texinfos;
+    std::vector<dnode_t>      nodes;
+    std::vector<dleaf_t>      leaves;
+    std::vector<uint16_t>     leafbrushes;
     std::string               entityString;
 };
 

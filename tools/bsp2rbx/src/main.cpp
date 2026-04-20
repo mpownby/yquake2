@@ -12,6 +12,7 @@
 #include "bsp2rbx/FileWriter.h"
 #include "bsp2rbx/RobloxXmlWriter.h"
 #include "bsp2rbx/SolidWorldspawnFilter.h"
+#include "bsp2rbx/WorldspawnBrushSet.h"
 
 namespace {
 
@@ -78,14 +79,15 @@ int main(int argc, char** argv) {
     }
 
     try {
-        auto reader   = std::make_shared<bsp2rbx::FileReader>();
-        auto parser   = std::make_shared<bsp2rbx::BspParser>();
-        auto geometry = std::make_shared<bsp2rbx::BrushGeometry>();
-        auto filter   = std::make_shared<bsp2rbx::SolidWorldspawnFilter>();
-        auto xml      = std::make_shared<bsp2rbx::RobloxXmlWriter>();
-        auto writer   = std::make_shared<bsp2rbx::FileWriter>();
+        auto reader    = std::make_shared<bsp2rbx::FileReader>();
+        auto parser    = std::make_shared<bsp2rbx::BspParser>();
+        auto worldspawn= std::make_shared<bsp2rbx::WorldspawnBrushSet>();
+        auto geometry  = std::make_shared<bsp2rbx::BrushGeometry>();
+        auto filter    = std::make_shared<bsp2rbx::SolidWorldspawnFilter>();
+        auto xml       = std::make_shared<bsp2rbx::RobloxXmlWriter>();
+        auto writer    = std::make_shared<bsp2rbx::FileWriter>();
 
-        bsp2rbx::BspConverter converter(reader, parser, geometry, filter, xml, writer);
+        bsp2rbx::BspConverter converter(reader, parser, worldspawn, geometry, filter, xml, writer);
         converter.convert(args.input, args.output, args.scale);
     } catch (const std::exception& e) {
         std::cerr << "bsp2rbx: " << e.what() << "\n";

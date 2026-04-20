@@ -40,6 +40,15 @@ protected:
         dbrushside_t bs{}; bs.planenum = 0; bs.texinfo = 0;
         appendLump(LUMP_BRUSHSIDES, &bs, sizeof(bs));
 
+        dnode_t node{}; node.planenum = 0; node.children[0] = -1; node.children[1] = -2;
+        appendLump(LUMP_NODES, &node, sizeof(node));
+
+        dleaf_t leaf{}; leaf.contents = CONTENTS_SOLID; leaf.firstleafbrush = 0; leaf.numleafbrushes = 1;
+        appendLump(LUMP_LEAFS, &leaf, sizeof(leaf));
+
+        const uint16_t leafBrush = 0;
+        appendLump(LUMP_LEAFBRUSHES, &leafBrush, sizeof(leafBrush));
+
         const char entities[] = "{ \"classname\" \"worldspawn\" }";
         appendLump(LUMP_ENTITIES, entities, sizeof(entities) - 1);
 
@@ -95,6 +104,18 @@ TEST_F(BspParserTest, ParsesMinimalBsp) {
 
     ASSERT_EQ(bsp->brushsides.size(), 1u);
     EXPECT_EQ(bsp->brushsides[0].planenum, 0);
+
+    ASSERT_EQ(bsp->nodes.size(), 1u);
+    EXPECT_EQ(bsp->nodes[0].children[0], -1);
+    EXPECT_EQ(bsp->nodes[0].children[1], -2);
+
+    ASSERT_EQ(bsp->leaves.size(), 1u);
+    EXPECT_EQ(bsp->leaves[0].contents, CONTENTS_SOLID);
+    EXPECT_EQ(bsp->leaves[0].firstleafbrush, 0);
+    EXPECT_EQ(bsp->leaves[0].numleafbrushes, 1);
+
+    ASSERT_EQ(bsp->leafbrushes.size(), 1u);
+    EXPECT_EQ(bsp->leafbrushes[0], 0u);
 
     EXPECT_EQ(bsp->entityString, "{ \"classname\" \"worldspawn\" }");
 }
