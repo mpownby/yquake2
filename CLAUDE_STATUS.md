@@ -5,12 +5,30 @@ forward so a fresh session can pick up where the last one left off.
 
 Last updated: 2026-04-19.
 
+## Done — bsp2rbx milestone 2 (OBB / rotated Parts, option 1)
+
+Milestone 2 implemented and green: **49 unit tests pass** (40 from
+milestone 1 + 7 OBB tests on `BrushGeometry` + 1 rotation-propagation
+test in `BspConverter` + 1 rotation-XML test in `RobloxXmlWriter`).
+`BrushGeometry::brushObb` computes a face-aligned OBB by finding three
+mutually orthogonal face-normal pairs and projecting vertices onto that
+basis; falls back to identity-rotation AABB when no orthogonal triple
+exists.
+
+**Surprising empirical finding**: none of the ~50 stock `baseq2/maps/*.bsp`
+files have any truly rotated brushes. Every non-axis-aligned face is a
+*chamfer cut* on an otherwise axis-aligned box (e.g. brush 34 in
+`battle.bsp` has the 6 ±x/±y/±z faces plus a 45° corner-chamfer plane).
+For such brushes the correct OBB is still the axis-aligned one, so the
+rbxlx output is byte-identical to milestone 1: `battle.rbxlx` still has
+374 parts, all with identity rotation. The OBB code path is correct and
+tested; it just doesn't fire on the available data. Improving visual
+fidelity on chamfered brushes is fundamentally a **convex-hull** problem
+(milestone 3, option 3), not an OBB one.
+
 ## Done — bsp2rbx milestone 1 (track 2)
 
-Scaffolded and green on Windows + MSVC. **40 unit tests pass** (31
-original + 7 WorldspawnBrushSet + 1 BspConverter regression + BspParser
-nodes/leaves/leafbrushes); env-gated demo1 e2e test is wired but skips
-unless `YQ2_TEST_BASEQ2` is set. Tool runs end-to-end on
+Scaffolded and green on Windows + MSVC. Tool runs end-to-end on
 `battle.bsp` (0.4 MB) -> `battle.rbxlx` (203 KB, 374 solid worldspawn
 parts) and `base64.bsp` (5.8 MB) -> `base64.rbxlx` (2.9 MB, 5424 parts).
 

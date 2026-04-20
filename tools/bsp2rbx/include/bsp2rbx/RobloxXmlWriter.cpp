@@ -54,9 +54,15 @@ void RobloxXmlWriter::emitPart(const RobloxPart& part) {
             << "<X>" << part.position[0] << "</X>"
             << "<Y>" << part.position[1] << "</Y>"
             << "<Z>" << part.position[2] << "</Z>"
-            << "<R00>1</R00><R01>0</R01><R02>0</R02>"
-            << "<R10>0</R10><R11>1</R11><R12>0</R12>"
-            << "<R20>0</R20><R21>0</R21><R22>1</R22>"
+            << "<R00>" << part.rotation[0] << "</R00>"
+            << "<R01>" << part.rotation[1] << "</R01>"
+            << "<R02>" << part.rotation[2] << "</R02>"
+            << "<R10>" << part.rotation[3] << "</R10>"
+            << "<R11>" << part.rotation[4] << "</R11>"
+            << "<R12>" << part.rotation[5] << "</R12>"
+            << "<R20>" << part.rotation[6] << "</R20>"
+            << "<R21>" << part.rotation[7] << "</R21>"
+            << "<R22>" << part.rotation[8] << "</R22>"
             << "</CoordinateFrame>\n";
     stream_ << "        <Color3uint8 name=\"Color3uint8\">"
             << packColor3uint8(part.color) << "</Color3uint8>\n";

@@ -12,6 +12,8 @@ public:
                 (const Bsp& bsp, int brushIndex), (override));
     MOCK_METHOD(BrushAabb, brushAabb,
                 (const Bsp& bsp, int brushIndex), (override));
+    MOCK_METHOD(BrushObb, brushObb,
+                (const Bsp& bsp, int brushIndex), (override));
 };
 
 } // namespace bsp2rbx

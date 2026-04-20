@@ -33,9 +33,25 @@ struct BrushAabb {
     std::string           texname;
 };
 
+// Oriented bounding box for a brush. The rotation is a row-major 3x3 matrix
+// whose columns are the world-space directions of the box's local +x, +y, +z
+// axes (unit vectors). The box has `size[k]` extent along its local k-th axis,
+// centered at `center` in world space.
+//
+// For an axis-aligned brush, `rotation` is the identity and `size` is the
+// AABB extent — so BrushObb degenerates to BrushAabb for common cases.
+struct BrushObb {
+    std::array<float, 3>  center;
+    std::array<float, 3>  size;
+    std::array<float, 9>  rotation;  // R00 R01 R02 R10 R11 R12 R20 R21 R22
+    int                   modelIndex;
+    std::string           texname;
+};
+
 struct RobloxPart {
     std::array<float, 3>   position;
     std::array<float, 3>   size;
+    std::array<float, 9>   rotation;  // identity by default; row-major 3x3
     std::array<uint8_t, 3> color;
     std::string            name;
 };

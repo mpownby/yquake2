@@ -168,4 +168,235 @@ BrushAabb BrushGeometry::brushAabb(const Bsp& bsp, int brushIndex) {
     return aabb;
 }
 
+namespace {
+
+// Epsilon for treating two direction vectors as antiparallel / orthogonal.
+constexpr float kAxisDotEps = 1e-3f;
+
+Vec3 normalize(const Vec3& v) {
+    const float len = std::sqrt(dot(v, v));
+    if (len < 1e-9f) return { 0.0f, 0.0f, 0.0f };
+    return { v.x / len, v.y / len, v.z / len };
+}
+
+// Collect each face's outward plane normal as a unit vector, deduplicated up
+// to sign (n and -n are the same axis direction). Treats any two normals
+// with |n1 . n2| >= 1 - kAxisDotEps as the same direction.
+std::vector<Vec3> collectFaceAxes(const Bsp& bsp, const dbrush_t& brush) {
+    std::vector<Vec3> out;
+    for (int s = 0; s < brush.numsides; ++s) {
+        const int bsi = brush.firstside + s;
+        if (bsi < 0 || static_cast<size_t>(bsi) >= bsp.brushsides.size()) continue;
+        const unsigned short pn = bsp.brushsides[static_cast<size_t>(bsi)].planenum;
+        if (pn >= bsp.planes.size()) continue;
+        const dplane_t& pl = bsp.planes[pn];
+        Vec3 n = normalize({ pl.normal[0], pl.normal[1], pl.normal[2] });
+        if (std::fabs(n.x) + std::fabs(n.y) + std::fabs(n.z) < 1e-6f) continue;
+
+        bool dup = false;
+        for (const Vec3& e : out) {
+            if (std::fabs(dot(e, n)) >= 1.0f - kAxisDotEps) { dup = true; break; }
+        }
+        if (!dup) out.push_back(n);
+    }
+    return out;
+}
+
+// Given a vertex cloud and an orthonormal frame, compute the OBB extent
+// (size per local axis) and the world-space center (midpoint of the
+// projected min/max along each axis, mapped back to world).
+void fitObbToVerts(const std::vector<std::array<float, 3>>& verts,
+                   const Vec3& ax0, const Vec3& ax1, const Vec3& ax2,
+                   std::array<float, 3>& outCenter,
+                   std::array<float, 3>& outSize) {
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+    float mn[3] = {  kInf,  kInf,  kInf };
+    float mx[3] = { -kInf, -kInf, -kInf };
+    const Vec3 axes[3] = { ax0, ax1, ax2 };
+    for (const auto& v : verts) {
+        const Vec3 p{ v[0], v[1], v[2] };
+        for (int k = 0; k < 3; ++k) {
+            const float d = dot(axes[k], p);
+            if (d < mn[k]) mn[k] = d;
+            if (d > mx[k]) mx[k] = d;
+        }
+    }
+    for (int k = 0; k < 3; ++k) {
+        outSize[k] = mx[k] - mn[k];
+    }
+    // world center = sum_k ((mn[k]+mx[k])/2) * axes[k]
+    Vec3 c{ 0.0f, 0.0f, 0.0f };
+    for (int k = 0; k < 3; ++k) {
+        const float cMid = (mn[k] + mx[k]) * 0.5f;
+        c = add(c, scale(axes[k], cMid));
+    }
+    outCenter = { c.x, c.y, c.z };
+}
+
+// Put an orthogonal triple into a canonical order: assign each to the world
+// axis it aligns with best, flip signs so each axis . world_i >= 0, and
+// enforce right-handedness.
+void canonicalizeTriple(const Vec3& a, const Vec3& b, const Vec3& c,
+                        Vec3& o0, Vec3& o1, Vec3& o2) {
+    const Vec3 worldAxes[3] = { {1,0,0}, {0,1,0}, {0,0,1} };
+    const Vec3 cand[3] = { a, b, c };
+    int assigned[3] = { -1, -1, -1 };
+    bool usedCand[3] = { false, false, false };
+    for (int w = 0; w < 3; ++w) {
+        int best = -1;
+        float bestScore = -1.0f;
+        for (int ci = 0; ci < 3; ++ci) {
+            if (usedCand[ci]) continue;
+            const float s = std::fabs(dot(cand[ci], worldAxes[w]));
+            if (s > bestScore) { bestScore = s; best = ci; }
+        }
+        assigned[w] = best;
+        if (best >= 0) usedCand[best] = true;
+    }
+
+    Vec3 out[3];
+    for (int w = 0; w < 3; ++w) {
+        Vec3 v = cand[assigned[w]];
+        if (dot(v, worldAxes[w]) < 0.0f) v = scale(v, -1.0f);
+        out[w] = v;
+    }
+    const Vec3 expectedZ = cross(out[0], out[1]);
+    if (dot(expectedZ, out[2]) < 0.0f) out[2] = scale(out[2], -1.0f);
+    o0 = out[0]; o1 = out[1]; o2 = out[2];
+}
+
+// Volume of the OBB fit to verts with the given orthonormal basis.
+float obbVolume(const std::vector<std::array<float, 3>>& verts,
+                const Vec3& ax0, const Vec3& ax1, const Vec3& ax2) {
+    std::array<float, 3> c{};
+    std::array<float, 3> sz{};
+    fitObbToVerts(verts, ax0, ax1, ax2, c, sz);
+    return sz[0] * sz[1] * sz[2];
+}
+
+// Generate all plausible OBB basis candidates from the deduped face normals.
+// For a brush with 3 mutually orthogonal face normals (like an axis-aligned
+// cube or a 45°-rotated box), those three form one candidate. For a brush
+// with 2 perpendicular face normals but no third collinear with their cross
+// product (like a tilted slab: 6 axis + 2 antiparallel tilted faces), we
+// synthesize the third axis via cross product — this is the key case that
+// makes bridge-support and chamfered-beam brushes produce a tight rotated
+// fit instead of a bloated AABB.
+std::vector<std::array<Vec3, 3>> candidateTriples(const std::vector<Vec3>& axes) {
+    std::vector<std::array<Vec3, 3>> out;
+    const size_t n = axes.size();
+
+    auto alreadyPresent = [&](const Vec3& a0, const Vec3& a1, const Vec3& a2) {
+        for (const auto& t : out) {
+            auto sameDir = [](const Vec3& u, const Vec3& v) {
+                return std::fabs(dot(u, v)) >= 1.0f - kAxisDotEps;
+            };
+            const Vec3 want[3] = { a0, a1, a2 };
+            bool matched[3] = { false, false, false };
+            int hits = 0;
+            for (const Vec3& w : want) {
+                for (int k = 0; k < 3; ++k) {
+                    if (matched[k]) continue;
+                    if (sameDir(w, t[k])) { matched[k] = true; ++hits; break; }
+                }
+            }
+            if (hits == 3) return true;
+        }
+        return false;
+    };
+
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = i + 1; j < n; ++j) {
+            if (std::fabs(dot(axes[i], axes[j])) > kAxisDotEps) continue;
+            // Synthesize third axis via cross product.
+            const Vec3 synth = normalize(cross(axes[i], axes[j]));
+            if (std::fabs(synth.x) + std::fabs(synth.y) + std::fabs(synth.z) < 1e-6f) continue;
+
+            // Prefer a real face normal for the third axis if one exists
+            // aligned with the cross product — this produces nicer output
+            // for axis-aligned brushes (identity rotation instead of a
+            // permuted/flipped variant).
+            Vec3 third = synth;
+            for (size_t k = 0; k < n; ++k) {
+                if (k == i || k == j) continue;
+                if (std::fabs(dot(axes[k], synth)) >= 1.0f - kAxisDotEps) {
+                    third = axes[k];
+                    if (dot(third, synth) < 0.0f) third = scale(third, -1.0f);
+                    break;
+                }
+            }
+
+            Vec3 c0, c1, c2;
+            canonicalizeTriple(axes[i], axes[j], third, c0, c1, c2);
+            if (!alreadyPresent(c0, c1, c2)) {
+                out.push_back({ c0, c1, c2 });
+            }
+        }
+    }
+
+    if (out.empty()) {
+        // Fallback: world axes.
+        Vec3 c0, c1, c2;
+        canonicalizeTriple({1,0,0}, {0,1,0}, {0,0,1}, c0, c1, c2);
+        out.push_back({ c0, c1, c2 });
+    }
+    return out;
+}
+
+} // namespace
+
+BrushObb BrushGeometry::brushObb(const Bsp& bsp, int brushIndex) {
+    validateBrushIndex(bsp, brushIndex);
+    const dbrush_t& brush = bsp.brushes[static_cast<size_t>(brushIndex)];
+
+    BrushObb obb{};
+    obb.modelIndex = 0;
+    obb.texname = textureNameForBrush(bsp, brush);
+    obb.rotation = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+
+    const auto verts = brushVertices(bsp, brushIndex);
+    if (verts.empty()) {
+        obb.center = { 0.0f, 0.0f, 0.0f };
+        obb.size   = { 0.0f, 0.0f, 0.0f };
+        return obb;
+    }
+
+    // Collect face-normal axes and always include the world axes as a
+    // degenerate fallback candidate — guarantees we consider AABB as an
+    // option even for brushes with few face normals.
+    auto axes = collectFaceAxes(bsp, brush);
+    auto pushIfMissing = [&](const Vec3& n) {
+        for (const Vec3& e : axes) {
+            if (std::fabs(dot(e, n)) >= 1.0f - kAxisDotEps) return;
+        }
+        axes.push_back(n);
+    };
+    pushIfMissing({1, 0, 0});
+    pushIfMissing({0, 1, 0});
+    pushIfMissing({0, 0, 1});
+
+    const auto candidates = candidateTriples(axes);
+
+    // Minimum-volume OBB wins. This is what lets the converter recognize a
+    // tilted slab (bridge support, chamfered beam) as a rotated thin box
+    // instead of bloating it into its axis-aligned bounding box.
+    float bestVol = std::numeric_limits<float>::infinity();
+    Vec3 ax0{1,0,0}, ax1{0,1,0}, ax2{0,0,1};
+    for (const auto& t : candidates) {
+        const float v = obbVolume(verts, t[0], t[1], t[2]);
+        if (v < bestVol - 1e-4f) {
+            bestVol = v;
+            ax0 = t[0]; ax1 = t[1]; ax2 = t[2];
+        }
+    }
+
+    fitObbToVerts(verts, ax0, ax1, ax2, obb.center, obb.size);
+    obb.rotation = {
+        ax0.x, ax1.x, ax2.x,
+        ax0.y, ax1.y, ax2.y,
+        ax0.z, ax1.z, ax2.z,
+    };
+    return obb;
+}
+
 } // namespace bsp2rbx

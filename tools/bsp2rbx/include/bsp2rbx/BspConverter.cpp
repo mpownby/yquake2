@@ -49,16 +49,16 @@ void BspConverter::convert(const std::filesystem::path& inBsp,
     for (int i = 0; i < count; ++i) {
         if (worldspawn.count(i) == 0) continue;
         if (!filter_->keep(*bsp, i)) continue;
-        const BrushAabb a = geometry_->brushAabb(*bsp, i);
+        const BrushObb o = geometry_->brushObb(*bsp, i);
         RobloxPart part{};
         part.name = "brush_" + std::to_string(i);
-        part.color = colorFromTexname(a.texname);
+        part.color = colorFromTexname(o.texname);
         for (int c = 0; c < 3; ++c) {
-            const float size = (a.maxs[c] - a.mins[c]) * scale;
-            const float mid  = (a.maxs[c] + a.mins[c]) * 0.5f * scale;
-            part.size[c]     = size;
-            part.position[c] = mid;
+            part.size[c]     = o.size[c]   * scale;
+            part.position[c] = o.center[c] * scale;
         }
+        // Rotation matrix is unit-free — no scaling.
+        part.rotation = o.rotation;
         xml_->emitPart(part);
     }
     const std::string xml = xml_->endDocument();

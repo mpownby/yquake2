@@ -9,6 +9,7 @@ public:
     std::vector<std::array<float, 3>>
         brushVertices(const Bsp& bsp, int brushIndex) override;
     BrushAabb brushAabb(const Bsp& bsp, int brushIndex) override;
+    BrushObb  brushObb (const Bsp& bsp, int brushIndex) override;
 };
 
 } // namespace bsp2rbx
