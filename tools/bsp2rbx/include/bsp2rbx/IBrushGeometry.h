@@ -32,6 +32,18 @@ public:
     // prism with three right-angle corners and one chamfer edge.
     virtual std::optional<BrushDecomposition>
         brushChamferedBeam(const Bsp& bsp, int brushIndex) = 0;
+    // Corner-chamfer brush — a box with a single plane cutting off one
+    // vertex (10 hull verts: 7 original cube corners + 3 chamfer cut
+    // points; 7 faces: 3 pentagons + 3 rectangles + 1 triangle). Returned
+    // decomposition tiles the un-chopped 7/8 of the bbox with three
+    // axis-aligned Parts and approximates the chopped corner sub-box with
+    // one WedgePart whose hypotenuse aligns with the chamfer plane along
+    // its longest leg. The approximation under-fills the chopped sub-box
+    // by up to ~1/6 of its volume — a small triangular notch — but
+    // captures the chamfer slope direction. Returns nullopt if the brush
+    // isn't a corner-chamfer.
+    virtual std::optional<BrushDecomposition>
+        brushCornerChamfer(const Bsp& bsp, int brushIndex) = 0;
 };
 
 } // namespace bsp2rbx

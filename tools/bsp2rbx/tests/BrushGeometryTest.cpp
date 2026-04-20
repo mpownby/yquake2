@@ -711,6 +711,127 @@ TEST(BrushGeometryTest, ChamferedBeamHandlesChamferLongerThanRectangleSide) {
     }
 }
 
+TEST(BrushGeometryTest, CornerChamferOnAabbCubeReturnsNullopt) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushCornerChamfer(bsp, 0).has_value());
+}
+
+TEST(BrushGeometryTest, CornerChamferOnTriangularPrismReturnsNullopt) {
+    // Triangular prism is phase-1 territory — corner-chamfer detector must
+    // not fire on it.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 4 }, { 0,-1, 0, 0 }, { 0, 0,-1, 0 },
+        { 0, r2, r2, r2 * 2 },
+    });
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushCornerChamfer(bsp, bi).has_value());
+}
+
+TEST(BrushGeometryTest, CornerChamferOnPentagonalPrismReturnsNullopt) {
+    // Pentagonal prism (chamfered beam) is phase-2 — corner-chamfer
+    // detector must not fire on it (face counts differ: 2 pent + 5 rect
+    // vs 3 pent + 3 rect + 1 tri).
+    Bsp bsp;
+    const float r2 = std::sqrt(0.5f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 2 }, { 0,-1, 0, 0 }, { 0, 1, 0, 4 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 }, { r2, 0, r2, r2 * 3 },
+    });
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushCornerChamfer(bsp, bi).has_value());
+}
+
+TEST(BrushGeometryTest, CornerChamferOnAxisAlignedCubeWithCornerCutDecomposes) {
+    // 2x2x2 box [0,2]^3 with the (+x,+y,+z) corner cut by a plane through
+    // (1, 2, 2), (2, 1, 2), (2, 2, 1). All three chamfer legs = 1.
+    Bsp bsp;
+    const float r3 = 1.0f / std::sqrt(3.0f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 },             // x >= 0
+        {  1, 0, 0, 2 },             // x <= 2
+        {  0,-1, 0, 0 },             // y >= 0
+        {  0, 1, 0, 2 },             // y <= 2
+        {  0, 0,-1, 0 },             // z >= 0
+        {  0, 0, 1, 2 },             // z <= 2
+        { r3, r3, r3, r3 * 5 },      // x + y + z <= 5  (chamfer plane)
+    });
+
+    BrushGeometry geom;
+    const auto verts = geom.brushVertices(bsp, bi);
+    // 8 cube corners minus 1 chopped + 3 cut points -> 10 unique verts.
+    // (brushVertices may return duplicates; we don't strictly check count.)
+    ASSERT_GE(verts.size(), 10u);
+
+    const auto dOpt = geom.brushCornerChamfer(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value()) << "axis-aligned corner chamfer should decompose";
+    const auto& d = *dOpt;
+
+    // 3 slab Parts + 1 approximation Wedge = 4 pieces.
+    ASSERT_EQ(d.pieces.size(), 4u);
+    int parts = 0, wedges = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind == BrushPiece::Kind::Part) ++parts;
+        else if (p.kind == BrushPiece::Kind::Wedge) ++wedges;
+    }
+    EXPECT_EQ(parts, 3);
+    EXPECT_EQ(wedges, 1);
+}
+
+TEST(BrushGeometryTest, CornerChamferAllPiecesInsideBrushAabb) {
+    // The 4-piece decomposition must fit entirely inside the brush's
+    // AABB. Otherwise pieces poke outside the brush envelope.
+    Bsp bsp;
+    const float r3 = 1.0f / std::sqrt(3.0f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 4 }, { 0,-1, 0, 0 }, { 0, 1, 0, 3 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 },
+        { r3, r3, r3, r3 * (4 + 3 + 2 - 1) },  // chamfer cuts (4,3,2) corner
+    });
+
+    BrushGeometry geom;
+    const auto dOpt = geom.brushCornerChamfer(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+
+    for (const auto& p : dOpt->pieces) {
+        const float halfX = p.size[0] * 0.5f;
+        const float halfY = p.size[1] * 0.5f;
+        const float halfZ = p.size[2] * 0.5f;
+        for (int w = 0; w < 3; ++w) {
+            const float worldHalf =
+                std::fabs(p.rotation[w * 3 + 0]) * halfX +
+                std::fabs(p.rotation[w * 3 + 1]) * halfY +
+                std::fabs(p.rotation[w * 3 + 2]) * halfZ;
+            const float lo = p.center[w] - worldHalf;
+            const float hi = p.center[w] + worldHalf;
+            const float bbHi = (w == 0) ? 4.0f : (w == 1 ? 3.0f : 2.0f);
+            EXPECT_GE(lo, -0.05f) << "piece below world axis " << w;
+            EXPECT_LE(hi, bbHi + 0.05f) << "piece above world axis " << w;
+        }
+    }
+}
+
+TEST(BrushGeometryTest, CornerChamferPropagatesTexname) {
+    Bsp bsp;
+    const float r3 = 1.0f / std::sqrt(3.0f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 2 }, { 0,-1, 0, 0 }, { 0, 1, 0, 2 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 }, { r3, r3, r3, r3 * 5 },
+    }, "ceiling/corner_chamfer");
+    BrushGeometry geom;
+    const auto dOpt = geom.brushCornerChamfer(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    EXPECT_EQ(dOpt->texname, std::string("ceiling/corner_chamfer"));
+}
+
+TEST(BrushGeometryTest, CornerChamferThrowsOnOutOfRangeIndex) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_THROW(geom.brushCornerChamfer(bsp, 99), std::out_of_range);
+}
+
 TEST(BrushGeometryTest, ChamferedBeamThrowsOnOutOfRangeIndex) {
     Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
     BrushGeometry geom;

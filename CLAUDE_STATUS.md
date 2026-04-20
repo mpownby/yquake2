@@ -5,6 +5,51 @@ forward so a fresh session can pick up where the last one left off.
 
 Last updated: 2026-04-20.
 
+## Done — bsp2rbx milestone 3 phase 3 (corner-chamfer decomposition, axis-aligned only)
+
+Phase 3 detects **single-corner-chamfer brushes** (10 hull verts + 3 pentagons +
+3 rectangles + 1 triangle face signature, with the 3 rectangle face normals
+**pairwise perpendicular** — i.e. the parent shape is a cube, not an oblique
+parallelepiped). Decomposes into **3 axis-aligned slab Parts** that exactly
+tile the un-chopped 7/8 of the bbox + **1 approximation WedgePart** along the
+longest chamfer leg (4 instances per brush). The wedge under-fills the
+chopped sub-box by up to ~1/6 of its volume — a small triangular notch — but
+captures the dominant chamfer slope direction.
+
+**Tests: 80 total, 100% pass** (79 + 1 skipped e2e). 7 new corner-chamfer
+tests covering AABB-cube/triangular-prism/pentagonal-prism rejection,
+axis-aligned cube-with-corner-cut decomposition, AABB containment of all
+pieces, texname propagation, and out-of-range.
+
+**Real-map hit rate: zero.** Surveyed `battle`, `city64`, `base64`,
+`bldstorm`, `arena7dm`, `21xdm2`, `aeroq2`, `colour`, `death32d` via the new
+diagnostic at [tools/bsp2rbx/tools/brush_stats.cpp](tools/bsp2rbx/tools/brush_stats.cpp):
+
+- `battle.bsp`: 0 brushes have the corner-chamfer face signature.
+- `city64.bsp`: 34 brushes match the *face* signature, but **all have
+  non-perpendicular adjacent rectangle faces** — they're rotated/oblique
+  parents, not axis-aligned cubes. Phase 3 correctly rejects them.
+- `base64.bsp`: 12 candidates, also all oblique.
+
+The "yellow inverted-pyramid" brush the user pointed at in `battle.bsp`'s
+ceiling corner is therefore **not** a corner chamfer — it's something more
+exotic (likely one of the 5 "tilted parallelogram with small chamfer"
+brushes phase 2 also rejects, which `brush_stats` calls out as
+`12v: 10*4v` or similar). To handle these, we'd need either:
+
+- A rotated-frame variant of phase 3 (find a non-axis-aligned 3-vector
+  basis from the 3 rect faces; decompose in that oblique frame), or
+- Acceptance that rotated chamfers stay as OBB Parts.
+
+Phase 3 machinery is in place — if a Q2 mod ships axis-aligned single-corner
+chamfers it'll Just Work. For stock maps it's dormant.
+
+**New code**:
+- `IBrushGeometry::brushCornerChamfer` ([include/bsp2rbx/IBrushGeometry.h](tools/bsp2rbx/include/bsp2rbx/IBrushGeometry.h))
+- Implementation in [BrushGeometry.cpp](tools/bsp2rbx/include/bsp2rbx/BrushGeometry.cpp): face-signature check → 3-plane intersection for chamfer corner + antipode → cut leg lengths → right-handed reorder → 3 slabs + 1 wedge lifted into world.
+- Wired into [BspConverter.cpp](tools/bsp2rbx/include/bsp2rbx/BspConverter.cpp) after the chamfered-beam path, before OBB fallback. Refactored emit logic into a shared `emitDecomposition` lambda.
+- Diagnostic [brush_stats](tools/bsp2rbx/tools/brush_stats.cpp) reports vertex/face signature distribution per BSP — useful for audit and future phase work.
+
 ## Done — bsp2rbx milestone 3 phase 2 (chamfered-beam decomposition)
 
 Phase 2 detects **pentagonal-prism brushes** (a box with one edge chamfered —

@@ -51,6 +51,8 @@ TEST(BspConverterTest, ReadsParsesIteratesAndWrites) {
         .WillOnce(Return(std::optional<BrushWedge>{}));
     EXPECT_CALL(*geom, brushChamferedBeam(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushCornerChamfer(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
     BrushObb obb{};
     obb.center = { 1.0f, 2.0f, 3.0f };
     obb.size   = { 2.0f, 4.0f, 6.0f };
@@ -98,6 +100,8 @@ TEST(BspConverterTest, AppliesScaleToPosAndSize) {
     EXPECT_CALL(*geom, brushWedge(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushWedge>{}));
     EXPECT_CALL(*geom, brushChamferedBeam(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushCornerChamfer(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     BrushObb obb{};
     obb.center = { 50.0f, 100.0f, 200.0f };
@@ -179,6 +183,10 @@ TEST(BspConverterTest, SkipsBrushesNotInWorldspawnSetEvenIfFilterWouldKeep) {
     EXPECT_CALL(*geom, brushChamferedBeam(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     EXPECT_CALL(*geom, brushChamferedBeam(Ref(*bspPtr), 2))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushCornerChamfer(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushCornerChamfer(Ref(*bspPtr), 2))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     BrushObb o0{}; o0.size = { 1.0f, 1.0f, 1.0f }; o0.texname = "walls/a";
     o0.rotation = { 1,0,0, 0,1,0, 0,0,1 };
@@ -437,6 +445,64 @@ TEST(BspConverterTest, AppliesScaleToDecompositionPieces) {
 
     BspConverter c(reader, parser, wsBrushes, geom, filter, xml, writer);
     c.convert("i", "o", 0.1f);
+}
+
+TEST(BspConverterTest, EmitsCornerChamferDecompositionAndSkipsObb) {
+    // When brushCornerChamfer returns a decomposition the converter must
+    // emit those pieces and NOT call brushObb. Names are sub-suffixed for
+    // uniqueness in Studio.
+    auto reader    = std::make_shared<MockFileReader>();
+    auto parser    = std::make_shared<MockBspParser>();
+    auto wsBrushes = std::make_shared<MockWorldspawnBrushSet>();
+    auto geom      = std::make_shared<MockBrushGeometry>();
+    auto filter    = std::make_shared<MockBrushFilter>();
+    auto xml       = std::make_shared<MockRobloxXmlWriter>();
+    auto writer    = std::make_shared<MockFileWriter>();
+
+    auto bsp = std::make_unique<Bsp>();
+    bsp->brushes.resize(1);
+    Bsp* bspPtr = bsp.get();
+
+    EXPECT_CALL(*reader, read(std::filesystem::path("i")))
+        .WillOnce(Return(std::vector<uint8_t>{}));
+    EXPECT_CALL(*parser, parse(Eq(std::vector<uint8_t>{})))
+        .WillOnce(Return(ByMove(std::move(bsp))));
+    EXPECT_CALL(*wsBrushes, compute(Ref(*bspPtr)))
+        .WillOnce(Return(std::unordered_set<int>{0}));
+    EXPECT_CALL(*filter, keep(Ref(*bspPtr), 0)).WillOnce(Return(true));
+    EXPECT_CALL(*geom, brushWedge(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushWedge>{}));
+    EXPECT_CALL(*geom, brushChamferedBeam(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+
+    BrushDecomposition d{};
+    d.texname = "walls/corner_chamfer";
+    BrushPiece slab0{}; slab0.kind = BrushPiece::Kind::Part;
+    slab0.center = { 1, 2, 3 }; slab0.size = { 4, 5, 6 };
+    slab0.rotation = { 1,0,0, 0,1,0, 0,0,1 };
+    BrushPiece slab1 = slab0;
+    BrushPiece slab2 = slab0;
+    BrushPiece w{}; w.kind = BrushPiece::Kind::Wedge;
+    w.center = { 7, 8, 9 }; w.size = { 1, 1, 1 };
+    w.rotation = { 1,0,0, 0,1,0, 0,0,1 };
+    d.pieces = { slab0, slab1, slab2, w };
+    EXPECT_CALL(*geom, brushCornerChamfer(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>(d)));
+    EXPECT_CALL(*geom, brushObb(Ref(*bspPtr), 0)).Times(0);
+
+    {
+        InSequence s;
+        EXPECT_CALL(*xml, beginDocument());
+        EXPECT_CALL(*xml, emitPart(Field(&RobloxPart::name, Eq("brush_0_0"))));
+        EXPECT_CALL(*xml, emitPart(Field(&RobloxPart::name, Eq("brush_0_1"))));
+        EXPECT_CALL(*xml, emitPart(Field(&RobloxPart::name, Eq("brush_0_2"))));
+        EXPECT_CALL(*xml, emitWedge(Field(&RobloxWedge::name, Eq("brush_0_3"))));
+        EXPECT_CALL(*xml, endDocument()).WillOnce(Return(std::string()));
+    }
+    EXPECT_CALL(*writer, write(std::filesystem::path("o"), std::string_view()));
+
+    BspConverter c(reader, parser, wsBrushes, geom, filter, xml, writer);
+    c.convert("i", "o", 1.0f);
 }
 
 } // namespace

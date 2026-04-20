@@ -1006,4 +1006,265 @@ BrushGeometry::brushChamferedBeam(const Bsp& bsp, int brushIndex) {
     return d;
 }
 
+std::optional<BrushDecomposition>
+BrushGeometry::brushCornerChamfer(const Bsp& bsp, int brushIndex) {
+    validateBrushIndex(bsp, brushIndex);
+    const dbrush_t& brush = bsp.brushes[static_cast<size_t>(brushIndex)];
+
+    // Corner-chamfer signature: 10+ unique hull vertices (7 original cube
+    // corners + 3 chamfer cut points; some brushes have extra duplicates
+    // near tangent bevel planes), and a face mix of 3 pentagons + 3
+    // rectangles + 1 triangle (the chamfer plane). Bevel sides with
+    // ≤ 2 hull verts are ignored. The face-signature check is the
+    // discriminating one — vertex count is just a lower bound.
+    const auto verts = dedupVerts(brushVertices(bsp, brushIndex));
+    if (verts.size() < 10) return std::nullopt;
+
+    const auto faces = collectFaceVertSets(bsp, brush, verts);
+    if (faces.empty()) return std::nullopt;
+
+    int triFaceIdx  = -1;
+    int pentCount   = 0;
+    int rectCount   = 0;
+    int triCount    = 0;
+    int rectFaceIdx[3] = { -1, -1, -1 };
+    int pentFaceIdx[3] = { -1, -1, -1 };
+    for (int i = 0; i < static_cast<int>(faces.size()); ++i) {
+        const size_t n = faces[i].vertIdx.size();
+        if (n == 3) {
+            if (triCount < 1) triFaceIdx = i;
+            ++triCount;
+        } else if (n == 4) {
+            if (rectCount < 3) rectFaceIdx[rectCount] = i;
+            ++rectCount;
+        } else if (n == 5) {
+            if (pentCount < 3) pentFaceIdx[pentCount] = i;
+            ++pentCount;
+        }
+    }
+    if (triCount != 1 || pentCount != 3 || rectCount != 3) return std::nullopt;
+
+    // The 3 rectangle faces should be pairwise mutually perpendicular —
+    // they're the 3 box faces opposite the chamfer corner. Their outward
+    // normals are antiparallel to the 3 box-axis directions pointing
+    // toward the chamfer corner; together they span 3D.
+    const FaceVerts& rA = faces[rectFaceIdx[0]];
+    const FaceVerts& rB = faces[rectFaceIdx[1]];
+    const FaceVerts& rC = faces[rectFaceIdx[2]];
+    if (std::fabs(dot(rA.normal, rB.normal)) > kAxisDotEps) return std::nullopt;
+    if (std::fabs(dot(rA.normal, rC.normal)) > kAxisDotEps) return std::nullopt;
+    if (std::fabs(dot(rB.normal, rC.normal)) > kAxisDotEps) return std::nullopt;
+
+    // Box-axis directions pointing TOWARD the chamfer corner (opposite the
+    // rect face outward normals).
+    const Vec3 axA = scale(rA.normal, -1.0f);
+    const Vec3 axB = scale(rB.normal, -1.0f);
+    const Vec3 axC = scale(rC.normal, -1.0f);
+
+    // The chamfer corner is the AABB corner farthest along (axA, axB, axC)
+    // — i.e. the point that maximizes dot(axA, p) + dot(axB, p) + dot(axC, p)
+    // over the brush's bounding box. Equivalently, it's the unique missing
+    // vertex of the un-chamfered cube. Find it by intersecting the 3
+    // pentagon planes.
+    //
+    // Each pentagon face's outward normal is one of (axA, axB, axC). Solve
+    // the 3 pentagon-plane equations for the corner.
+    auto pentNormalDist = [&](int pentIdx) {
+        return std::pair<Vec3, float>{ faces[pentIdx].normal, faces[pentIdx].dist };
+    };
+    const auto p0 = pentNormalDist(pentFaceIdx[0]);
+    const auto p1 = pentNormalDist(pentFaceIdx[1]);
+    const auto p2 = pentNormalDist(pentFaceIdx[2]);
+
+    Vec3 chamferCorner{};
+    {
+        // Solve 3x3 system: p0.normal . X = p0.dist, etc. (Cramer's rule.)
+        const Vec3& n0 = p0.first;
+        const Vec3& n1 = p1.first;
+        const Vec3& n2 = p2.first;
+        const float d0 = p0.second, d1 = p1.second, d2 = p2.second;
+        const Vec3 n1xn2 = cross(n1, n2);
+        const float det  = dot(n0, n1xn2);
+        if (std::fabs(det) < 1e-6f) return std::nullopt;
+        const Vec3 n2xn0 = cross(n2, n0);
+        const Vec3 n0xn1 = cross(n0, n1);
+        chamferCorner = scale(add(add(scale(n1xn2, d0), scale(n2xn0, d1)),
+                                  scale(n0xn1, d2)),
+                              1.0f / det);
+    }
+
+    // The "antipode corner" — opposite the chamfer corner — is the AABB
+    // corner farthest in the (-axA, -axB, -axC) direction. Find it by
+    // intersecting the 3 rectangle planes.
+    Vec3 antipodeCorner{};
+    {
+        const Vec3& n0 = rA.normal;
+        const Vec3& n1 = rB.normal;
+        const Vec3& n2 = rC.normal;
+        const float d0 = rA.dist, d1 = rB.dist, d2 = rC.dist;
+        const Vec3 n1xn2 = cross(n1, n2);
+        const float det  = dot(n0, n1xn2);
+        if (std::fabs(det) < 1e-6f) return std::nullopt;
+        const Vec3 n2xn0 = cross(n2, n0);
+        const Vec3 n0xn1 = cross(n0, n1);
+        antipodeCorner = scale(add(add(scale(n1xn2, d0), scale(n2xn0, d1)),
+                                   scale(n0xn1, d2)),
+                               1.0f / det);
+    }
+
+    // Box extent along each axis = signed distance from antipode to chamfer
+    // corner along (axA, axB, axC). All 3 must be positive.
+    const Vec3 cornerToAntipode = sub(chamferCorner, antipodeCorner);
+    const float extA = dot(cornerToAntipode, axA);
+    const float extB = dot(cornerToAntipode, axB);
+    const float extC = dot(cornerToAntipode, axC);
+    if (extA <= 1e-4f || extB <= 1e-4f || extC <= 1e-4f) return std::nullopt;
+
+    // The 3 cut points are the brush vertices on the triangle face. From
+    // each, compute the chamfer leg lengths (cutA, cutB, cutC) — the
+    // distance inward from the chamfer corner along each box axis to the
+    // corresponding cut point.
+    const FaceVerts& tri = faces[triFaceIdx];
+    if (tri.vertIdx.size() != 3) return std::nullopt;
+    float cutA = -1.0f, cutB = -1.0f, cutC = -1.0f;
+    for (int v : tri.vertIdx) {
+        const Vec3 p = vertAt(verts, v);
+        const Vec3 toCorner = sub(chamferCorner, p);
+        const float along[3] = { dot(toCorner, axA), dot(toCorner, axB), dot(toCorner, axC) };
+        // The cut point sits ON 2 of the 3 box-axis-aligned faces adjacent
+        // to the chamfer corner. So 2 of its 3 axis-displacements from the
+        // chamfer corner should be ~0, and the 3rd is the leg length.
+        int axisIdx = -1;
+        float legLen = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            if (std::fabs(along[k]) > 1e-3f) {
+                if (axisIdx >= 0) { axisIdx = -1; break; }
+                axisIdx = k;
+                legLen = along[k];
+            }
+        }
+        if (axisIdx < 0) return std::nullopt;
+        if (axisIdx == 0)      cutA = legLen;
+        else if (axisIdx == 1) cutB = legLen;
+        else                   cutC = legLen;
+    }
+    if (cutA <= 1e-4f || cutB <= 1e-4f || cutC <= 1e-4f) return std::nullopt;
+    if (cutA >= extA || cutB >= extB || cutC >= extC) return std::nullopt;
+
+    // Right-handed orthonormal frame (axA, axB, axC). Reorder if necessary
+    // so cross(axA, axB) = +axC. Otherwise emit pieces with a left-handed
+    // basis which rotates wrong in Studio.
+    Vec3 ax0 = axA, ax1 = axB, ax2 = axC;
+    float ext0 = extA, ext1 = extB, ext2 = extC;
+    float cut0 = cutA, cut1 = cutB, cut2 = cutC;
+    if (dot(cross(ax0, ax1), ax2) < 0.0f) {
+        std::swap(ax1, ax2);
+        std::swap(ext1, ext2);
+        std::swap(cut1, cut2);
+    }
+
+    // Lift a local-axis-aligned (offset0, offset1, offset2) and
+    // (size0, size1, size2) into a world Part centered at antipode +
+    // sum(ax_i * (offset_i + size_i/2)).
+    auto liftSlab = [&](float off0, float off1, float off2,
+                        float sz0, float sz1, float sz2) {
+        BrushPiece bp{};
+        bp.kind = BrushPiece::Kind::Part;
+        const Vec3 c = add(add(add(antipodeCorner,
+                                   scale(ax0, off0 + sz0 * 0.5f)),
+                               scale(ax1, off1 + sz1 * 0.5f)),
+                           scale(ax2, off2 + sz2 * 0.5f));
+        bp.center = { c.x, c.y, c.z };
+        bp.size   = { sz0, sz1, sz2 };
+        bp.rotation = {
+            ax0.x, ax1.x, ax2.x,
+            ax0.y, ax1.y, ax2.y,
+            ax0.z, ax1.z, ax2.z,
+        };
+        return bp;
+    };
+
+    BrushDecomposition d{};
+    d.modelIndex = 0;
+    d.texname    = textureNameForBrush(bsp, brush);
+
+    // Three slab Parts that exactly tile (box minus chopped sub-box):
+    //   Slab 0: full extent along axes 0 and 1, axis-2 from 0 to ext2-cut2
+    //   Slab 1: full axes 0 and 2-from-cut, axis-1 from 0 to ext1-cut1
+    //   Slab 2: axis-0 from 0 to ext0-cut0, axes 1/2 in cut region
+    // Together they cover the box except [ext0-cut0, ext0] × [ext1-cut1, ext1]
+    // × [ext2-cut2, ext2] (the chopped sub-box).
+    d.pieces.push_back(liftSlab(0.0f, 0.0f, 0.0f,
+                                ext0, ext1, ext2 - cut2));
+    d.pieces.push_back(liftSlab(0.0f, 0.0f, ext2 - cut2,
+                                ext0, ext1 - cut1, cut2));
+    d.pieces.push_back(liftSlab(0.0f, ext1 - cut1, ext2 - cut2,
+                                ext0 - cut0, cut1, cut2));
+
+    // Approximation wedge for the chopped sub-box. Pick the longest cut
+    // leg as the prism axis; the wedge fills a triangular prism whose
+    // hypotenuse plane projects the chamfer along that direction. This
+    // captures the most prominent slope visually but under-fills the
+    // chopped sub-box by up to ~1/6 of its volume.
+    int prismIdx = 0;
+    if (cut1 > cut0 && cut1 >= cut2) prismIdx = 1;
+    else if (cut2 > cut0 && cut2 > cut1) prismIdx = 2;
+
+    // Map (i, j) = the two non-prism axes.
+    const int iIdx = (prismIdx + 1) % 3;
+    const int jIdx = (prismIdx + 2) % 3;
+    const float cutPrism = (prismIdx == 0) ? cut0 : (prismIdx == 1 ? cut1 : cut2);
+    const float cutI     = (iIdx == 0) ? cut0 : (iIdx == 1 ? cut1 : cut2);
+    const float cutJ     = (jIdx == 0) ? cut0 : (jIdx == 1 ? cut1 : cut2);
+    const float extPrism = (prismIdx == 0) ? ext0 : (prismIdx == 1 ? ext1 : ext2);
+    const float extI     = (iIdx == 0) ? ext0 : (iIdx == 1 ? ext1 : ext2);
+    const float extJ     = (jIdx == 0) ? ext0 : (jIdx == 1 ? ext1 : ext2);
+
+    const Vec3 axes[3] = { ax0, ax1, ax2 };
+    Vec3 prismAxisLocal = axes[prismIdx];
+    Vec3 axI = axes[iIdx];
+    Vec3 axJ = axes[jIdx];
+
+    // Wedge convention (matching BrushWedge / phase 1):
+    //   local +X = prism axis (length cutPrism)
+    //   local +Y = leg toward chamfer corner along axI (length cutI)
+    //   local +Z = leg toward chamfer corner along axJ (length cutJ)
+    //   right-angle vertex at local (-X/2, -Y/2, -Z/2)
+    // World position of right-angle vertex (in chopped sub-box):
+    //   antipode + ax_prism * (extPrism - cutPrism)
+    //            + axI * (extI - cutI)
+    //            + axJ * (extJ - cutJ)
+    Vec3 rightAngle = add(add(add(antipodeCorner,
+                                  scale(prismAxisLocal, extPrism - cutPrism)),
+                              scale(axI, extI - cutI)),
+                          scale(axJ, extJ - cutJ));
+
+    Vec3 wAxX = prismAxisLocal;
+    Vec3 wAxY = axI;
+    Vec3 wAxZ = axJ;
+    float legY = cutI;
+    float legZ = cutJ;
+    if (dot(cross(wAxX, wAxY), wAxZ) < 0.0f) {
+        std::swap(wAxY, wAxZ);
+        std::swap(legY, legZ);
+    }
+
+    BrushPiece wedge{};
+    wedge.kind = BrushPiece::Kind::Wedge;
+    const Vec3 wCenter = add(add(add(rightAngle,
+                                     scale(wAxX, cutPrism * 0.5f)),
+                                 scale(wAxY, legY * 0.5f)),
+                             scale(wAxZ, legZ * 0.5f));
+    wedge.center = { wCenter.x, wCenter.y, wCenter.z };
+    wedge.size   = { cutPrism, legY, legZ };
+    wedge.rotation = {
+        wAxX.x, wAxY.x, wAxZ.x,
+        wAxX.y, wAxY.y, wAxZ.y,
+        wAxX.z, wAxY.z, wAxZ.z,
+    };
+    d.pieces.push_back(wedge);
+
+    return d;
+}
+
 } // namespace bsp2rbx

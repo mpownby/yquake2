@@ -65,8 +65,7 @@ void BspConverter::convert(const std::filesystem::path& inBsp,
             continue;
         }
 
-        if (auto dOpt = geometry_->brushChamferedBeam(*bsp, i)) {
-            const BrushDecomposition& d = *dOpt;
+        auto emitDecomposition = [&](const BrushDecomposition& d) {
             const auto col = colorFromTexname(d.texname);
             int sub = 0;
             for (const BrushPiece& p : d.pieces) {
@@ -93,6 +92,15 @@ void BspConverter::convert(const std::filesystem::path& inBsp,
                     xml_->emitWedge(wedge);
                 }
             }
+        };
+
+        if (auto dOpt = geometry_->brushChamferedBeam(*bsp, i)) {
+            emitDecomposition(*dOpt);
+            continue;
+        }
+
+        if (auto dOpt = geometry_->brushCornerChamfer(*bsp, i)) {
+            emitDecomposition(*dOpt);
             continue;
         }
 
