@@ -4,6 +4,7 @@
 *.mk
 *.user
 *.d
+*.lua
 
 # Python (q2_bridge)
 __pycache__/
