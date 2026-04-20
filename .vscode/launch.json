@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug yquake2 (RelWithDebInfo)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/release/RelWithDebInfo/yquake2.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/release/RelWithDebInfo",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build yquake2"
+        },
+        {
+            "name": "Debug q2ded (dedicated server)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/release/RelWithDebInfo/q2ded.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/release/RelWithDebInfo",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build yquake2"
+        }
+    ]
+}

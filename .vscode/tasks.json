@@ -1,0 +1,68 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: configure",
+            "type": "shell",
+            "command": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe",
+            "args": [
+                "-G", "Visual Studio 17 2022",
+                "-A", "x64",
+                "-DSDL3_SUPPORT=OFF",
+                "-DYQUAKE2LIBS=c:/projects/dhewm3-libs-master/x86_64-w64-mingw32/",
+                "-S", "${workspaceFolder}",
+                "-B", "${workspaceFolder}/build"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Build yquake2",
+            "type": "shell",
+            "command": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe",
+            "args": [
+                "--build", "${workspaceFolder}/build",
+                "--config", "RelWithDebInfo"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$msCompile"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "detail": "Builds yquake2 (RelWithDebInfo) using the VS 2022 generator."
+        },
+        {
+            "label": "Build yquake2 (Debug)",
+            "type": "shell",
+            "command": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe",
+            "args": [
+                "--build", "${workspaceFolder}/build",
+                "--config", "Debug"
+            ],
+            "group": "build",
+            "problemMatcher": ["$msCompile"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Copy runtime DLLs",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-Command",
+                "Copy-Item -Force 'c:/projects/dhewm3-libs-master/x86_64-w64-mingw32/bin/SDL2.dll' '${workspaceFolder}/build/release/RelWithDebInfo/'; Copy-Item -Force 'c:/projects/dhewm3-libs-master/x86_64-w64-mingw32/bin/OpenAL32.dll' '${workspaceFolder}/build/release/RelWithDebInfo/'; Copy-Item -Force 'c:/projects/dhewm3-libs-master/x86_64-w64-mingw32/bin/libcurl-4.dll' '${workspaceFolder}/build/release/RelWithDebInfo/curl.dll'"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
