@@ -1626,4 +1626,202 @@ BrushGeometry::brushHexagonalFloor(const Bsp& bsp, int brushIndex) {
     return d;
 }
 
+std::optional<BrushDecomposition>
+BrushGeometry::brushBeveledBottomBrick(const Bsp& bsp, int brushIndex) {
+    validateBrushIndex(bsp, brushIndex);
+    const dbrush_t& brush = bsp.brushes[static_cast<size_t>(brushIndex)];
+
+    // Signature: an axis-aligned box with all 4 bottom edges clipped by
+    // non-axis-aligned "chamfer" planes that point in some XY direction
+    // and DOWN (nz < 0). The top face is a rectangle strictly larger
+    // than the bottom face. The brush is decomposed into:
+    //   1 top slab (full top rectangle above z_core_top)
+    //   1 bottom core (bottom rectangle extruded up to z_core_top)
+    //   4 side wedges (one per chamfer plane, sloping between them).
+    // Corner-tetrahedral gaps where adjacent chamfers meet are left
+    // empty — they're a small fraction of the total volume.
+    const auto verts = dedupVerts(brushVertices(bsp, brushIndex));
+    if (verts.size() < 10) return std::nullopt;
+
+    const auto faces = collectFaceVertSets(bsp, brush, verts);
+    if (faces.empty()) return std::nullopt;
+
+    // Classify faces by normal.
+    int topFace = -1, botFace = -1;
+    int posXFace = -1, negXFace = -1, posYFace = -1, negYFace = -1;
+    std::vector<int> chamferFaces;
+    constexpr float kAxial = 0.999f;
+    constexpr float kNonAxial = 1e-3f;
+    for (int i = 0; i < static_cast<int>(faces.size()); ++i) {
+        const Vec3& n = faces[i].normal;
+        if (n.z > kAxial && std::fabs(n.x) < kNonAxial && std::fabs(n.y) < kNonAxial) {
+            topFace = i;
+        } else if (n.z < -kAxial && std::fabs(n.x) < kNonAxial && std::fabs(n.y) < kNonAxial) {
+            botFace = i;
+        } else if (n.x > kAxial) {
+            posXFace = i;
+        } else if (n.x < -kAxial) {
+            negXFace = i;
+        } else if (n.y > kAxial) {
+            posYFace = i;
+        } else if (n.y < -kAxial) {
+            negYFace = i;
+        } else if (n.z < -0.3f) {
+            // chamfer plane: points mostly down with XY tilt
+            chamferFaces.push_back(i);
+        } else {
+            return std::nullopt;  // unexpected face orientation
+        }
+    }
+    if (topFace < 0 || botFace < 0 || posXFace < 0 || negXFace < 0 ||
+        posYFace < 0 || negYFace < 0 || chamferFaces.size() != 4) {
+        return std::nullopt;
+    }
+
+    // Pull top and bottom face extents from their verts.
+    auto extent = [&](int fi, float& xmin, float& xmax, float& ymin,
+                      float& ymax, float& z) {
+        xmin = std::numeric_limits<float>::infinity();
+        xmax = -std::numeric_limits<float>::infinity();
+        ymin = std::numeric_limits<float>::infinity();
+        ymax = -std::numeric_limits<float>::infinity();
+        z = 0.0f;
+        for (int vi : faces[fi].vertIdx) {
+            const Vec3 v = vertAt(verts, vi);
+            if (v.x < xmin) xmin = v.x;
+            if (v.x > xmax) xmax = v.x;
+            if (v.y < ymin) ymin = v.y;
+            if (v.y > ymax) ymax = v.y;
+            z = v.z;
+        }
+    };
+    float top_x_min, top_x_max, top_y_min, top_y_max, z_top;
+    float bot_x_min, bot_x_max, bot_y_min, bot_y_max, z_bot;
+    extent(topFace, top_x_min, top_x_max, top_y_min, top_y_max, z_top);
+    extent(botFace, bot_x_min, bot_x_max, bot_y_min, bot_y_max, z_bot);
+    if (z_top <= z_bot + 1e-3f) return std::nullopt;
+    if (top_x_min > bot_x_min - 1e-3f || top_x_max < bot_x_max + 1e-3f ||
+        top_y_min > bot_y_min - 1e-3f || top_y_max < bot_y_max + 1e-3f) {
+        return std::nullopt;
+    }
+
+    // For each chamfer, find the z where its plane meets the top bbox corner
+    // it's "closest" to (the corner the chamfer cuts off). The max of these
+    // gives z_core_top — above which the top slab is unaffected by any
+    // chamfer.
+    float z_core_top = z_bot;
+    for (int ci : chamferFaces) {
+        const Vec3& n = faces[ci].normal;
+        const float d = faces[ci].dist;
+        if (std::fabs(n.z) < 1e-6f) return std::nullopt;
+        const float cx = n.x > 0 ? top_x_max : (n.x < 0 ? top_x_min : 0.0f);
+        const float cy = n.y > 0 ? top_y_max : (n.y < 0 ? top_y_min : 0.0f);
+        // n.x*cx + n.y*cy + n.z*z = d at the binding z.
+        const float z_start = (d - n.x * cx - n.y * cy) / n.z;
+        if (z_start > z_core_top) z_core_top = z_start;
+    }
+    if (z_core_top <= z_bot + 1e-3f || z_core_top >= z_top - 1e-3f) {
+        return std::nullopt;
+    }
+
+    BrushDecomposition out{};
+    out.modelIndex = 0;
+    out.texname    = textureNameForBrush(bsp, brush);
+
+    const float top_xsize = top_x_max - top_x_min;
+    const float top_ysize = top_y_max - top_y_min;
+    const float bot_xsize = bot_x_max - bot_x_min;
+    const float bot_ysize = bot_y_max - bot_y_min;
+    const float core_zsize = z_core_top - z_bot;
+    const float top_zsize  = z_top - z_core_top;
+
+    // 1. Top slab.
+    {
+        BrushPiece p{};
+        p.kind = BrushPiece::Kind::Part;
+        p.center = {
+            0.5f * (top_x_min + top_x_max),
+            0.5f * (top_y_min + top_y_max),
+            0.5f * (z_core_top + z_top)
+        };
+        p.size = { top_xsize, top_ysize, top_zsize };
+        p.rotation = { 1,0,0, 0,1,0, 0,0,1 };
+        out.pieces.push_back(p);
+    }
+
+    // 2. Bottom core (bottom-face-sized column from z_bot up to z_core_top).
+    {
+        BrushPiece p{};
+        p.kind = BrushPiece::Kind::Part;
+        p.center = {
+            0.5f * (bot_x_min + bot_x_max),
+            0.5f * (bot_y_min + bot_y_max),
+            0.5f * (z_bot + z_core_top)
+        };
+        p.size = { bot_xsize, bot_ysize, core_zsize };
+        p.rotation = { 1,0,0, 0,1,0, 0,0,1 };
+        out.pieces.push_back(p);
+    }
+
+    // 3-6. Four side wedges, one per chamfer.
+    auto emitSideWedge = [&](Vec3 prismAxis, Vec3 legHoriz, Vec3 legVert,
+                             float prismLen, float legY, float legZ,
+                             Vec3 rightAngle) {
+        // Ensure (prismAxis, legY_axis, legZ_axis) is right-handed;
+        // otherwise swap legs.
+        if (dot(cross(prismAxis, legHoriz), legVert) < 0.0f) {
+            std::swap(legHoriz, legVert);
+            std::swap(legY, legZ);
+        }
+        BrushPiece w{};
+        w.kind = BrushPiece::Kind::Wedge;
+        const Vec3 c = add(add(add(rightAngle,
+                                   scale(prismAxis, prismLen * 0.5f)),
+                               scale(legHoriz, legY * 0.5f)),
+                           scale(legVert, legZ * 0.5f));
+        w.center = { c.x, c.y, c.z };
+        // Roblox WedgePart convention: local +X = prism, +Y = legVert,
+        //                              +Z = -legHoriz.
+        w.size = { prismLen, legZ, legY };
+        w.rotation = {
+            prismAxis.x, legVert.x, -legHoriz.x,
+            prismAxis.y, legVert.y, -legHoriz.y,
+            prismAxis.z, legVert.z, -legHoriz.z,
+        };
+        out.pieces.push_back(w);
+    };
+
+    for (int ci : chamferFaces) {
+        const Vec3& n = faces[ci].normal;
+        const bool isXChamfer = std::fabs(n.x) > std::fabs(n.y);
+        if (isXChamfer) {
+            const bool positive = n.x > 0;
+            const float x_outer = positive ? top_x_max : top_x_min;
+            const float x_inner = positive ? bot_x_max : bot_x_min;
+            const float delta_x = positive ? (x_outer - x_inner) : (x_inner - x_outer);
+            const Vec3 prismAxis{ 0, 1, 0 };
+            const Vec3 legHoriz{ positive ? 1.0f : -1.0f, 0, 0 };
+            const Vec3 legVert { 0, 0, -1.0f };
+            const Vec3 rightAngle{ x_inner, bot_y_min, z_core_top };
+            emitSideWedge(prismAxis, legHoriz, legVert,
+                          /*prismLen=*/bot_ysize,
+                          /*legY=*/delta_x, /*legZ=*/core_zsize, rightAngle);
+        } else {
+            const bool positive = n.y > 0;
+            const float y_outer = positive ? top_y_max : top_y_min;
+            const float y_inner = positive ? bot_y_max : bot_y_min;
+            const float delta_y = positive ? (y_outer - y_inner) : (y_inner - y_outer);
+            const Vec3 prismAxis{ 1, 0, 0 };
+            const Vec3 legHoriz{ 0, positive ? 1.0f : -1.0f, 0 };
+            const Vec3 legVert { 0, 0, -1.0f };
+            const Vec3 rightAngle{ bot_x_min, y_inner, z_core_top };
+            emitSideWedge(prismAxis, legHoriz, legVert,
+                          /*prismLen=*/bot_xsize,
+                          /*legY=*/delta_y, /*legZ=*/core_zsize, rightAngle);
+        }
+    }
+
+    return out;
+}
+
 } // namespace bsp2rbx

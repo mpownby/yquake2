@@ -947,6 +947,83 @@ TEST(BrushGeometryTest, HexagonalFloorThrowsOnOutOfRangeIndex) {
     EXPECT_THROW(geom.brushHexagonalFloor(bsp, 99), std::out_of_range);
 }
 
+TEST(BrushGeometryTest, BeveledBottomBrickOnAabbCubeReturnsNullopt) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushBeveledBottomBrick(bsp, 0).has_value());
+}
+
+TEST(BrushGeometryTest, BeveledBottomBrickOnBoxWithAll4BottomEdgesChamfered) {
+    // Box x in [-10, 10], y in [-5, 5], z in [0, 4], with all 4 bottom
+    // edges chamfered by planes inclined at 45° (normals mix equal X or Y
+    // and -Z components). At 45° each chamfer shrinks the bottom by the
+    // chamfer depth on each side.
+    // +X chamfer cuts from (x=10, z=0) to (x=8, z=4? no — we want it to
+    // cut from corner (10, 0) inward). Normal outward = (+X, -Z)/sqrt(2).
+    // Plane passes through chamfer endpoints (10-cut, 0) and (10, cut).
+    // For symmetric 2-unit cuts: endpoints (8, 0) and (10, 2). Normal
+    // (r2, 0, -r2). Plane dist d = n.(10, 0, 2) = 10*r2 - 2*r2 = 8*r2.
+    // Similarly for -X: normal (-r2, 0, -r2), d = -r2*(-10) - r2*2 = 8*r2.
+    // For +Y (y in [-5, 5], cut 2 into y): (0, r2, -r2), d = r2*3.
+    // For -Y: (0, -r2, -r2), d = r2*3.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1,  0,  0, 10 },       // x >= -10
+        {  1,  0,  0, 10 },       // x <= 10
+        {  0, -1,  0,  5 },       // y >= -5
+        {  0,  1,  0,  5 },       // y <= 5
+        {  0,  0, -1,  0 },       // z >= 0
+        {  0,  0,  1,  4 },       // z <= 4
+        {  r2,  0, -r2, 8 * r2 }, // +X bottom chamfer
+        { -r2,  0, -r2, 8 * r2 }, // -X bottom chamfer
+        {  0,  r2, -r2, 3 * r2 }, // +Y bottom chamfer
+        {  0, -r2, -r2, 3 * r2 }, // -Y bottom chamfer
+    });
+    BrushGeometry geom;
+    const auto dOpt = geom.brushBeveledBottomBrick(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value()) << "4-chamfer brick must decompose";
+    const auto& d = *dOpt;
+
+    // Expect 6 pieces: 1 top slab (Part) + 1 bottom core (Part) + 4 wedges.
+    ASSERT_EQ(d.pieces.size(), 6u);
+    int parts = 0, wedges = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind == BrushPiece::Kind::Part) ++parts;
+        else if (p.kind == BrushPiece::Kind::Wedge) ++wedges;
+    }
+    EXPECT_EQ(parts, 2);
+    EXPECT_EQ(wedges, 4);
+
+    // All piece centers must lie inside the brush AABB.
+    for (const auto& p : d.pieces) {
+        EXPECT_GE(p.center[0], -10.01f); EXPECT_LE(p.center[0], 10.01f);
+        EXPECT_GE(p.center[1],  -5.01f); EXPECT_LE(p.center[1],  5.01f);
+        EXPECT_GE(p.center[2],  -0.01f); EXPECT_LE(p.center[2],  4.01f);
+    }
+}
+
+TEST(BrushGeometryTest, BeveledBottomBrickPropagatesTexname) {
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 10 }, { 1, 0, 0, 10 }, { 0,-1, 0, 5 }, { 0, 1, 0, 5 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 4 },
+        { r2, 0,-r2, 8*r2 }, {-r2, 0,-r2, 8*r2 },
+        { 0, r2,-r2, 3*r2 }, { 0,-r2,-r2, 3*r2 },
+    }, "bridges/bridge_deck");
+    BrushGeometry geom;
+    const auto dOpt = geom.brushBeveledBottomBrick(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    EXPECT_EQ(dOpt->texname, std::string("bridges/bridge_deck"));
+}
+
+TEST(BrushGeometryTest, BeveledBottomBrickThrowsOnOutOfRangeIndex) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_THROW(geom.brushBeveledBottomBrick(bsp, 99), std::out_of_range);
+}
+
 TEST(BrushGeometryTest, ChamferedBeamThrowsOnOutOfRangeIndex) {
     Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
     BrushGeometry geom;

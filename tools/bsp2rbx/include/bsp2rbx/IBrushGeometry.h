@@ -54,6 +54,20 @@ public:
     // top face is not a double-chamfered hexagon.
     virtual std::optional<BrushDecomposition>
         brushHexagonalFloor(const Bsp& bsp, int brushIndex) = 0;
+    // Beveled-bottom brick — an axis-aligned box with ALL 4 bottom edges
+    // chamfered by non-axis-aligned planes (the top face is a rectangle
+    // strictly larger than the bottom face). The 4 chamfers may have
+    // different slopes on X- vs Y-edges; the detector finds the highest
+    // z where no chamfer still binds and splits the brush into:
+    //   (1) a full-top slab above that z,
+    //   (2) a bottom-face-sized column extruded up to that z,
+    //   (3) four side WedgeParts sloping from the top slab's edges down
+    //       to the column's edges along each of the 4 chamfer planes.
+    // The 4 corner-volume pieces (where two chamfers meet) are left as
+    // empty gaps — they're small relative to the overall shape. Returns
+    // nullopt when the brush isn't a 4-bottom-chamfer brick.
+    virtual std::optional<BrushDecomposition>
+        brushBeveledBottomBrick(const Bsp& bsp, int brushIndex) = 0;
 };
 
 } // namespace bsp2rbx

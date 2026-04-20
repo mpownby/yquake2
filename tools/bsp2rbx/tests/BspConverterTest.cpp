@@ -55,6 +55,8 @@ TEST(BspConverterTest, ReadsParsesIteratesAndWrites) {
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     EXPECT_CALL(*geom, brushHexagonalFloor(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushBeveledBottomBrick(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
     BrushObb obb{};
     obb.center = { 1.0f, 2.0f, 3.0f };
     obb.size   = { 2.0f, 4.0f, 6.0f };
@@ -106,6 +108,8 @@ TEST(BspConverterTest, AppliesScaleToPosAndSize) {
     EXPECT_CALL(*geom, brushCornerChamfer(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     EXPECT_CALL(*geom, brushHexagonalFloor(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushBeveledBottomBrick(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     BrushObb obb{};
     obb.center = { 50.0f, 100.0f, 200.0f };
@@ -195,6 +199,10 @@ TEST(BspConverterTest, SkipsBrushesNotInWorldspawnSetEvenIfFilterWouldKeep) {
     EXPECT_CALL(*geom, brushHexagonalFloor(Ref(*bspPtr), 0))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     EXPECT_CALL(*geom, brushHexagonalFloor(Ref(*bspPtr), 2))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushBeveledBottomBrick(Ref(*bspPtr), 0))
+        .WillOnce(Return(std::optional<BrushDecomposition>{}));
+    EXPECT_CALL(*geom, brushBeveledBottomBrick(Ref(*bspPtr), 2))
         .WillOnce(Return(std::optional<BrushDecomposition>{}));
     BrushObb o0{}; o0.size = { 1.0f, 1.0f, 1.0f }; o0.texname = "walls/a";
     o0.rotation = { 1,0,0, 0,1,0, 0,0,1 };

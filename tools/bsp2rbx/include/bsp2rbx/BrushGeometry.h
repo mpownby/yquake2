@@ -17,6 +17,8 @@ public:
         brushCornerChamfer(const Bsp& bsp, int brushIndex) override;
     std::optional<BrushDecomposition>
         brushHexagonalFloor(const Bsp& bsp, int brushIndex) override;
+    std::optional<BrushDecomposition>
+        brushBeveledBottomBrick(const Bsp& bsp, int brushIndex) override;
 };
 
 } // namespace bsp2rbx
