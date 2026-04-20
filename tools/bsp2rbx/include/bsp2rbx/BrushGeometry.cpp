@@ -575,13 +575,20 @@ std::optional<BrushWedge> BrushGeometry::brushWedge(const Bsp& bsp, int brushInd
                            scale(axisY, legA * 0.5f)),
                        scale(axisZ, legB * 0.5f));
 
+    // Re-label local frame for Roblox WedgePart convention: Studio places the
+    // right-angle vertex of a WedgePart at local (-X/2, -Y/2, +Z/2) with the
+    // slope rising from -Z to +Z as Y increases. Our geometry above computed
+    // axisY along legA and axisZ along legB with the right-angle at local
+    // (-X/2, -Y/2, -Z/2). Map to the Roblox frame by setting local +Y = old
+    // axisZ and local +Z = -old axisY; the bbox center and right-handedness
+    // are preserved.
     BrushWedge w{};
     w.center = { c.x, c.y, c.z };
-    w.size   = { prismLength, legA, legB };
+    w.size   = { prismLength, legB, legA };
     w.rotation = {
-        axisX.x, axisY.x, axisZ.x,
-        axisX.y, axisY.y, axisZ.y,
-        axisX.z, axisY.z, axisZ.z,
+        axisX.x,  axisZ.x, -axisY.x,
+        axisX.y,  axisZ.y, -axisY.y,
+        axisX.z,  axisZ.z, -axisY.z,
     };
     w.modelIndex = 0;
     w.texname    = textureNameForBrush(bsp, brush);
@@ -968,11 +975,11 @@ BrushGeometry::brushChamferedBeam(const Bsp& bsp, int brushIndex) {
         bp.kind = BrushPiece::Kind::Wedge;
         // Right-angle vertex on pentagon A in 2D = (uRight, vRight); in world =
         const Vec3 raA = add(anchorA, add(scale(axU, w.uRight), scale(axV, w.vRight)));
-        // Wedge axes (matching BrushWedge convention from phase 1):
-        //   local +X = prism axis (length = prismLength)
-        //   local +Y = leg direction along U (signed by w.uLegSign)
-        //   local +Z = leg direction along V (signed by w.vLegSign)
-        // Right-angle vertex on the -X triangle face is at local (-X/2, -Y/2, -Z/2).
+        // Intermediate axes (right-angle at local (-X/2, -Y/2, -Z/2)):
+        //   axisX = prism axis
+        //   axisY = leg along U (w.uLegSign)
+        //   axisZ = leg along V (w.vLegSign)
+        // These are re-labeled for Roblox WedgePart below.
         Vec3 axisX = prismAxis;
         Vec3 axisY = scale(axU, w.uLegSign);
         Vec3 axisZ = scale(axV, w.vLegSign);
@@ -982,17 +989,20 @@ BrushGeometry::brushChamferedBeam(const Bsp& bsp, int brushIndex) {
             std::swap(axisY, axisZ);
             std::swap(legY,  legZ);
         }
-        // Center = right-angle vertex + axisX*L/2 + axisY*legY/2 + axisZ*legZ/2.
+        // Bbox center = right-angle vertex + axisX*L/2 + axisY*legY/2 + axisZ*legZ/2.
         const Vec3 c = add(add(add(raA,
                                    scale(axisX, prismLength * 0.5f)),
                                scale(axisY, legY * 0.5f)),
                            scale(axisZ, legZ * 0.5f));
+        // Roblox WedgePart convention (right-angle at local (-X/2, -Y/2, +Z/2),
+        // slope rises from -Z to +Z as Y increases): new local +Y = axisZ,
+        // new local +Z = -axisY. Swap legY/legZ accordingly.
         bp.center = { c.x, c.y, c.z };
-        bp.size   = { prismLength, legY, legZ };
+        bp.size   = { prismLength, legZ, legY };
         bp.rotation = {
-            axisX.x, axisY.x, axisZ.x,
-            axisX.y, axisY.y, axisZ.y,
-            axisX.z, axisY.z, axisZ.z,
+            axisX.x,  axisZ.x, -axisY.x,
+            axisX.y,  axisZ.y, -axisY.y,
+            axisX.z,  axisZ.z, -axisY.z,
         };
         return bp;
     };
@@ -1255,12 +1265,15 @@ BrushGeometry::brushCornerChamfer(const Bsp& bsp, int brushIndex) {
                                      scale(wAxX, cutPrism * 0.5f)),
                                  scale(wAxY, legY * 0.5f)),
                              scale(wAxZ, legZ * 0.5f));
+    // Re-label for Roblox WedgePart convention (right-angle at local
+    // (-X/2, -Y/2, +Z/2)): new local +Y = wAxZ, new local +Z = -wAxY.
+    // Swap leg sizes; bbox center is unchanged.
     wedge.center = { wCenter.x, wCenter.y, wCenter.z };
-    wedge.size   = { cutPrism, legY, legZ };
+    wedge.size   = { cutPrism, legZ, legY };
     wedge.rotation = {
-        wAxX.x, wAxY.x, wAxZ.x,
-        wAxX.y, wAxY.y, wAxZ.y,
-        wAxX.z, wAxY.z, wAxZ.z,
+        wAxX.x,  wAxZ.x, -wAxY.x,
+        wAxX.y,  wAxZ.y, -wAxY.y,
+        wAxX.z,  wAxZ.z, -wAxY.z,
     };
     d.pieces.push_back(wedge);
 

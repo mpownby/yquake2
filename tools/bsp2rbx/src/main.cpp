@@ -88,7 +88,8 @@ int main(int argc, char** argv) {
         auto writer    = std::make_shared<bsp2rbx::FileWriter>();
 
         bsp2rbx::BspConverter converter(reader, parser, worldspawn, geometry, filter, xml, writer);
-        converter.convert(args.input, args.output, args.scale);
+        converter.convert(args.input, args.output, args.scale,
+                          bsp2rbx::BspConverter::kQ2ToRobloxAxisTransform);
     } catch (const std::exception& e) {
         std::cerr << "bsp2rbx: " << e.what() << "\n";
         return EXIT_FAILURE;

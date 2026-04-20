@@ -46,6 +46,9 @@ target_link_libraries(bsp2rbx PRIVATE bsp2rbx_lib)
 add_executable(brush_stats tools/brush_stats.cpp $<TARGET_OBJECTS:bsp2rbx_lib>)
 target_link_libraries(brush_stats PRIVATE bsp2rbx_lib)
 
+add_executable(brush_at tools/brush_at.cpp $<TARGET_OBJECTS:bsp2rbx_lib>)
+target_link_libraries(brush_at PRIVATE bsp2rbx_lib)
+
 enable_testing()
 include(GoogleTest)
 
