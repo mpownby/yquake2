@@ -1372,6 +1372,144 @@ Cmd_Teleport_f(edict_t *ent)
 	gi.linkentity(ent);
 }
 
+/*
+ * argv(0) teleport_exact x y z
+ * Like teleport, but places the player at the exact coordinates
+ * (no +10 Z cushion).
+ */
+static void
+Cmd_TeleportExact_f(edict_t *ent)
+{
+	if (!ent || !ent->client)
+	{
+		return;
+	}
+
+	if ((deathmatch->value || coop->value) && !sv_cheats->value)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "You must run the server with '+set cheats 1' to enable this command.\n");
+		return;
+	}
+
+	if (gi.argc() != 4)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "Usage: teleport_exact x y z\n");
+		return;
+	}
+
+	gi.unlinkentity(ent);
+
+	ent->s.origin[0] = atof(gi.argv(1));
+	ent->s.origin[1] = atof(gi.argv(2));
+	ent->s.origin[2] = atof(gi.argv(3));
+
+	VectorClear(ent->velocity);
+	ent->client->ps.pmove.pm_time = 20;
+	ent->client->ps.pmove.pm_flags |= PMF_TIME_TELEPORT;
+
+	VectorClear(ent->s.angles);
+	VectorClear(ent->client->ps.viewangles);
+	VectorClear(ent->client->v_angle);
+
+	KillBox(ent);
+
+	gi.linkentity(ent);
+}
+
+/*
+ * argv(0) setangles pitch yaw roll
+ * Aim the player's camera at the given Euler angles (degrees).
+ */
+static void
+Cmd_SetAngles_f(edict_t *ent)
+{
+	vec3_t angles;
+	int i;
+
+	if (!ent || !ent->client)
+	{
+		return;
+	}
+
+	if ((deathmatch->value || coop->value) && !sv_cheats->value)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "You must run the server with '+set cheats 1' to enable this command.\n");
+		return;
+	}
+
+	if (gi.argc() != 4)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "Usage: setangles pitch yaw roll\n");
+		return;
+	}
+
+	angles[0] = atof(gi.argv(1));
+	angles[1] = atof(gi.argv(2));
+	angles[2] = atof(gi.argv(3));
+
+	/* delta_angles compensates for the client's own input
+	   so the new view sticks on the next frame. */
+	for (i = 0; i < 3; i++)
+	{
+		ent->client->ps.pmove.delta_angles[i] = ANGLE2SHORT(
+				angles[i] - ent->client->resp.cmd_angles[i]);
+	}
+
+	VectorCopy(angles, ent->client->v_angle);
+	VectorCopy(angles, ent->client->ps.viewangles);
+	VectorClear(ent->s.angles);
+}
+
+/*
+ * argv(0) setforward fx fy fz
+ * Aim the player's camera along the given forward vector.
+ */
+static void
+Cmd_SetForward_f(edict_t *ent)
+{
+	vec3_t forward, angles;
+	int i;
+
+	if (!ent || !ent->client)
+	{
+		return;
+	}
+
+	if ((deathmatch->value || coop->value) && !sv_cheats->value)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "You must run the server with '+set cheats 1' to enable this command.\n");
+		return;
+	}
+
+	if (gi.argc() != 4)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "Usage: setforward fx fy fz\n");
+		return;
+	}
+
+	forward[0] = atof(gi.argv(1));
+	forward[1] = atof(gi.argv(2));
+	forward[2] = atof(gi.argv(3));
+
+	if (VectorLength(forward) < 0.0001f)
+	{
+		gi.cprintf(ent, PRINT_HIGH, "setforward: zero-length vector\n");
+		return;
+	}
+
+	vectoangles(forward, angles);
+
+	for (i = 0; i < 3; i++)
+	{
+		ent->client->ps.pmove.delta_angles[i] = ANGLE2SHORT(
+				angles[i] - ent->client->resp.cmd_angles[i]);
+	}
+
+	VectorCopy(angles, ent->client->v_angle);
+	VectorCopy(angles, ent->client->ps.viewangles);
+	VectorClear(ent->s.angles);
+}
+
 static void
 Cmd_SpawnEntity_f(edict_t *ent)
 {
@@ -2031,6 +2169,18 @@ ClientCommand(edict_t *ent)
 	else if (Q_stricmp(cmd, "teleport") == 0)
 	{
 		Cmd_Teleport_f(ent);
+	}
+	else if (Q_stricmp(cmd, "teleport_exact") == 0)
+	{
+		Cmd_TeleportExact_f(ent);
+	}
+	else if (Q_stricmp(cmd, "setangles") == 0)
+	{
+		Cmd_SetAngles_f(ent);
+	}
+	else if (Q_stricmp(cmd, "setforward") == 0)
+	{
+		Cmd_SetForward_f(ent);
 	}
 	else if (Q_stricmp(cmd, "spawnentity") == 0)
 	{
