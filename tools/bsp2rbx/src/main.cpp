@@ -19,7 +19,7 @@ namespace {
 struct CliArgs {
     std::filesystem::path input;
     std::filesystem::path output;
-    float                 scale = 0.0254f;
+    float                 scale = 1.0f / 12.0f;
     std::string           mode  = "aabb";
     bool                  worldspawnOnly = true;
 };
@@ -28,7 +28,7 @@ void printUsage(const char* argv0) {
     std::cerr
         << "Usage: " << argv0 << " [--mode=aabb|mesh] [--scale=<float>] "
            "[--worldspawn-only] input.bsp output.rbxlx\n"
-           "Defaults: --mode=aabb --scale=0.0254\n";
+           "Defaults: --mode=aabb --scale=0.0833 (1 Q2 unit = 1 inch, 1 stud = 1 foot)\n";
 }
 
 bool parseCli(int argc, char** argv, CliArgs& out) {

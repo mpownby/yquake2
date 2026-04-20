@@ -30,6 +30,7 @@ Studio — all autonomously, with the unit-test suite catching regressions.
 - **Coding conventions for new code**: [CLAUDE_CONVENTIONS.md](CLAUDE_CONVENTIONS.md)
 - **MCP bridge** (architecture, files, how to use): [CLAUDE_MCP.md](CLAUDE_MCP.md)
 - **bsp2rbx converter** (design, DI graph, milestones): [CLAUDE_CONVERTER.md](CLAUDE_CONVERTER.md)
+- **Importing a `.rbxlx` into running Studio via MCP**: [CLAUDE_ROBLOX_IMPORT.md](CLAUDE_ROBLOX_IMPORT.md)
 
 ## Building (Windows, MSVC)
 

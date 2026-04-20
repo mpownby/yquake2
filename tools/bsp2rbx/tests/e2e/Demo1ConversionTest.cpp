@@ -36,7 +36,7 @@ TEST(Demo1ConversionTest, ConvertsDemo1WhenBaseq2Available) {
     auto writer     = std::make_shared<FileWriter>();
 
     BspConverter c(reader, parser, worldspawn, geom, filter, xml, writer);
-    c.convert(bsp, out, 0.0254f);
+    c.convert(bsp, out, 1.0f / 12.0f);
 
     EXPECT_TRUE(std::filesystem::exists(out));
     EXPECT_GT(std::filesystem::file_size(out), 100u);
