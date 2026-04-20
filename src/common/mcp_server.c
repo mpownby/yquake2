@@ -132,6 +132,21 @@ static char   s_cap_buf[MCP_CAP_BUFLEN];
 static size_t s_cap_len;
 static int    s_cap_active;
 
+/* ----- deferred console response ---------------------------------------- */
+
+/* A `cmd foo` console request forwards the string to the server over the
+   client netchan; the netchan is flushed in CL_Frame, after MCP_RunFrame
+   has already returned. The server (and thus gi.cprintf output) only runs
+   in the *next* Qcommon_Frame's SV_Frame — and SV_Frame runs at the packet
+   framerate (~60Hz), not the render framerate (up to 999Hz) that
+   Qcommon_Frame itself ticks at. So we can't wait N ticks; we need real
+   time. Holding capture open for 100ms covers ~6 packet-frame cycles on
+   loopback, which is more than enough for client→server→client. */
+#define MCP_DEFERRED_MS 100
+static int      s_deferred_active;
+static unsigned s_deferred_deadline_ms;
+static int      s_deferred_commands_executed;
+
 void
 MCP_CaptureBegin(void)
 {
@@ -315,9 +330,14 @@ mcp_handle_console(const char *request)
 	MCP_CaptureBegin();
 	Cbuf_AddText(cmd);
 	Cbuf_Execute();
-	const char *output = MCP_CaptureEnd();
 
-	mcp_send_console_result(output, 1);
+	/* Defer the response: leave capture open for a short window so that
+	   server-side output from forwarded `cmd` strings (gi.cprintf →
+	   svc_print → Com_Printf on the client) lands in the buffer before
+	   we send the JSON line back. */
+	s_deferred_active = 1;
+	s_deferred_deadline_ms = (unsigned)Sys_Milliseconds() + MCP_DEFERRED_MS;
+	s_deferred_commands_executed = 1;
 }
 
 static void
@@ -491,6 +511,16 @@ mcp_drain_client(void)
 				/* dispatch closed the connection */
 				return;
 			}
+
+			if (s_deferred_active)
+			{
+				/* Dispatch handed off to deferred-response mode. Stop
+				   reading — another recv() would see the peer's
+				   SHUT_WR (bridge half-closes after sending) and we'd
+				   close the socket before getting a chance to send
+				   the deferred reply. */
+				return;
+			}
 		}
 	}
 }
@@ -504,6 +534,21 @@ MCP_RunFrame(void)
 	}
 
 	mcp_accept_pending();
+
+	/* If a console response is pending, hold off on draining new requests
+	   until the deadline passes — otherwise the next request would
+	   overwrite the still-filling capture buffer. */
+	if (s_deferred_active)
+	{
+		unsigned now = (unsigned)Sys_Milliseconds();
+		if ((int)(now - s_deferred_deadline_ms) >= 0)
+		{
+			const char *output = MCP_CaptureEnd();
+			mcp_send_console_result(output, s_deferred_commands_executed);
+			s_deferred_active = 0;
+		}
+		return;
+	}
 
 	if (s_client != MCP_INVALID_SOCKET)
 	{

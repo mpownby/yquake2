@@ -172,10 +172,12 @@ Gotchas observed in practice:
   (`where`, `teleport_exact`, `setangles`, `setforward`). They're
   registered in [src/game/g_cmds.c](src/game/g_cmds.c) as client
   commands, not engine commands.
-- `cmd where` uses `gi.cprintf` (reliable server→client message), so its
-  output does *not* appear in the `q2_console` response — it lands in
-  the client's HUD/console one frame later. To read it, `toggleconsole`
-  first, then `q2_screenshot`.
+- `cmd` forwarding takes a round-trip through the client→server→client
+  netchan before `gi.cprintf` output reaches Com_Printf on the client.
+  `q2_console` keeps the capture window open for ~100ms (time-based,
+  because `MCP_RunFrame` ticks at render framerate but `SV_Frame` only
+  runs at packet framerate) so the forwarded output lands in the JSON
+  response as plain text. No screenshot / screen-scraping needed.
 - `cmd setangles` pitch tends to get reset to 0 on the next frame under
   noclip because the movement code re-derives `v_angle` from input.
   Yaw holds fine; for precise pitch, use `setforward` instead.
