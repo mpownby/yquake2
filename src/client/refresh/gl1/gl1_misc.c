@@ -157,6 +157,53 @@ R_ScreenShot(void)
 	free(buffer);
 }
 
+/*
+ * Like R_ScreenShot, but returns the raw RGB pixels (top-to-bottom) to the
+ * caller instead of writing to disk. Used by the MCP bridge.
+ */
+qboolean
+R_RetrieveScreenshot(int *out_w, int *out_h, int *out_c,
+                     unsigned char **out_pixels)
+{
+	int w = vid.width, h = vid.height;
+	if (w <= 0 || h <= 0)
+	{
+		return false;
+	}
+
+	byte *buffer = malloc(w * h * 3);
+	if (!buffer)
+	{
+		return false;
+	}
+
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buffer);
+
+	/* Flip rows so the top of the image is at offset 0. */
+	{
+		size_t bytesPerRow = 3 * w;
+		YQ2_VLA(byte, rowBuffer, bytesPerRow);
+		byte *curRowL = buffer;
+		byte *curRowH = buffer + bytesPerRow * (h - 1);
+		while (curRowL < curRowH)
+		{
+			memcpy(rowBuffer, curRowL, bytesPerRow);
+			memcpy(curRowL, curRowH, bytesPerRow);
+			memcpy(curRowH, rowBuffer, bytesPerRow);
+			curRowL += bytesPerRow;
+			curRowH -= bytesPerRow;
+		}
+		YQ2_VLAFREE(rowBuffer);
+	}
+
+	*out_w = w;
+	*out_h = h;
+	*out_c = 3;
+	*out_pixels = buffer;
+	return true;
+}
+
 void
 R_Strings(void)
 {

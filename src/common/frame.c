@@ -25,6 +25,7 @@
  */
 
 #include "header/common.h"
+#include "header/mcp_server.h"
 #include <setjmp.h>
 
 cvar_t *developer;
@@ -396,6 +397,7 @@ Qcommon_Init(int argc, char **argv)
 #ifndef DEDICATED_ONLY
 	CL_Init();
 #endif
+	MCP_Init();
 
 	// Everythings up, let's add + cmds from command line.
 	if (!Cbuf_AddLateCommands())
@@ -672,6 +674,8 @@ Qcommon_Frame(int usec)
 
 	Cbuf_Execute();
 
+	MCP_RunFrame();
+
 
 	if (host_speeds->value)
 	{
@@ -803,6 +807,8 @@ Qcommon_Frame(int usec)
 
 	Cbuf_Execute();
 
+	MCP_RunFrame();
+
 
 	// Run the serverframe.
 	if (packetframe) {
@@ -818,6 +824,7 @@ Qcommon_Frame(int usec)
 void
 Qcommon_Shutdown(void)
 {
+	MCP_Shutdown();
 	FS_ShutdownFilesystem();
 	Cvar_Fini();
 

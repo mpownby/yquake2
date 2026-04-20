@@ -25,6 +25,7 @@
  */
 
 #include "header/common.h"
+#include "header/mcp_server.h"
 #include <stdlib.h>
 #include <setjmp.h>
 
@@ -101,6 +102,8 @@ Com_VPrintf(int print_level, const char *fmt, va_list argptr)
 			strcat(rd_buffer, msg);
 			return;
 		}
+
+		MCP_CaptureAppend(msg);
 
 	#ifndef DEDICATED_ONLY
 		Con_Print(msg);

@@ -1007,6 +1007,11 @@ CL_Init(void)
 
 	CL_InitLocal();
 
+	{
+		extern void MCP_ClientInit(void);
+		MCP_ClientInit();
+	}
+
 	Cbuf_Execute();
 
 	Key_ReadConsoleHistory();

@@ -2151,6 +2151,8 @@ GetRefAPI(refimport_t imp)
 	re.EndWorldRenderpass = RI_EndWorldRenderpass;
 	re.EndFrame = RI_EndFrame;
 
+	re.RetrieveScreenshot = R_RetrieveScreenshot;
+
     // Tell the client that we're unsing the
 	// new renderer restart API.
     ri.Vid_RequestRestart(RESTART_NO);

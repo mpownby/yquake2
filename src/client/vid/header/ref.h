@@ -218,6 +218,18 @@ typedef struct
 	void 	(EXPORT *DrawPicScaledCol) (int x, int y, const char *pic, float factor, const float color[3]);
 
 	//void	(EXPORT *AppActivate)( qboolean activate );
+
+	/*
+	 * Optional: read back the current framebuffer into a freshly-malloc'd
+	 * pixel buffer (caller must free()). Used by the MCP bridge to send
+	 * screenshots over the wire without going via disk. Renderers that
+	 * don't implement this leave the pointer NULL.
+	 *
+	 * On success: writes width, height, channels (3 = RGB, 4 = RGBA),
+	 * and *pixels. Pixels are top-to-bottom row order. Returns true.
+	 */
+	qboolean (EXPORT *RetrieveScreenshot)(int *width, int *height,
+	                                      int *channels, unsigned char **pixels);
 } refexport_t;
 
 typedef struct

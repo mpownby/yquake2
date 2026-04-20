@@ -449,6 +449,7 @@ set(Client-Source
 	${CLIENT_SRC_DIR}/cl_screen.c
 	${CLIENT_SRC_DIR}/cl_tempentities.c
 	${CLIENT_SRC_DIR}/cl_view.c
+	${CLIENT_SRC_DIR}/mcp_client.c
 	${CLIENT_SRC_DIR}/curl/download.c
 	${CLIENT_SRC_DIR}/curl/qcurl.c
 	${CLIENT_SRC_DIR}/input/gyro.c
@@ -473,6 +474,8 @@ set(Client-Source
 	${COMMON_SRC_DIR}/md4.c
 	${COMMON_SRC_DIR}/movemsg.c
 	${COMMON_SRC_DIR}/frame.c
+	${COMMON_SRC_DIR}/mcp_json.c
+	${COMMON_SRC_DIR}/mcp_server.c
 	${COMMON_SRC_DIR}/netchan.c
 	${COMMON_SRC_DIR}/pmove.c
 	${COMMON_SRC_DIR}/szone.c
@@ -531,6 +534,8 @@ set(Client-Header
 	${COMMON_SRC_DIR}/header/crc.h
 	${COMMON_SRC_DIR}/header/files.h
 	${COMMON_SRC_DIR}/header/glob.h
+	${COMMON_SRC_DIR}/header/mcp_json.h
+	${COMMON_SRC_DIR}/header/mcp_server.h
 	${COMMON_SRC_DIR}/header/shared.h
 	${COMMON_SRC_DIR}/header/zone.h
 	${COMMON_SRC_DIR}/unzip/ioapi.h
@@ -553,6 +558,8 @@ set(Server-Source
 	${COMMON_SRC_DIR}/glob.c
 	${COMMON_SRC_DIR}/md4.c
 	${COMMON_SRC_DIR}/frame.c
+	${COMMON_SRC_DIR}/mcp_json.c
+	${COMMON_SRC_DIR}/mcp_server.c
 	${COMMON_SRC_DIR}/movemsg.c
 	${COMMON_SRC_DIR}/netchan.c
 	${COMMON_SRC_DIR}/pmove.c
@@ -582,6 +589,8 @@ set(Server-Header
 	${COMMON_SRC_DIR}/header/crc.h
 	${COMMON_SRC_DIR}/header/files.h
 	${COMMON_SRC_DIR}/header/glob.h
+	${COMMON_SRC_DIR}/header/mcp_json.h
+	${COMMON_SRC_DIR}/header/mcp_server.h
 	${COMMON_SRC_DIR}/header/shared.h
 	${COMMON_SRC_DIR}/header/zone.h
 	${COMMON_SRC_DIR}/unzip/ioapi.h

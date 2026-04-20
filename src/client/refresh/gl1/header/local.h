@@ -273,6 +273,8 @@ extern unsigned d_8to24table[256];
 extern int registration_sequence;
 
 void R_ScreenShot(void);
+qboolean R_RetrieveScreenshot(int *out_w, int *out_h, int *out_c,
+                              unsigned char **out_pixels);
 void R_DrawAliasModel(entity_t *currententity, const model_t *currentmodel);
 void R_DrawBrushModel(entity_t *currententity, const model_t *currentmodel);
 void R_DrawSpriteModel(entity_t *currententity, const model_t *currentmodel);
