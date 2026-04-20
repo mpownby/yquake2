@@ -10,6 +10,9 @@ public:
         brushVertices(const Bsp& bsp, int brushIndex) override;
     BrushAabb brushAabb(const Bsp& bsp, int brushIndex) override;
     BrushObb  brushObb (const Bsp& bsp, int brushIndex) override;
+    std::optional<BrushWedge> brushWedge(const Bsp& bsp, int brushIndex) override;
+    std::optional<BrushDecomposition>
+        brushChamferedBeam(const Bsp& bsp, int brushIndex) override;
 };
 
 } // namespace bsp2rbx

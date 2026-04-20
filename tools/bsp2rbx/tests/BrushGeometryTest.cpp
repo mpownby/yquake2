@@ -352,6 +352,371 @@ TEST(BrushGeometryTest, ObbThrowsOnOutOfRangeIndex) {
     EXPECT_THROW(geom.brushObb(bsp, 99), std::out_of_range);
 }
 
+TEST(BrushGeometryTest, WedgeOnAabbCubeReturnsNullopt) {
+    // A cube has 6 sides — not the 5 of a triangular prism.
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushWedge(bsp, 0).has_value());
+}
+
+TEST(BrushGeometryTest, WedgeOnAxisAlignedRampMatchesGeometry) {
+    // 45° axis-aligned ramp:
+    //   x ∈ [0, 4], y ∈ [0, 2], z ∈ [0, 2], with the slanted top plane
+    //   y + z <= 2 cutting off the (+y, +z) edge so the cross-section in YZ
+    //   is a right triangle with legs of length 2 and the right angle at
+    //   (y=0, z=0). Prism axis is +X, length 4.
+    Bsp bsp;
+    const float r2 = std::sqrt(0.5f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 },                 // x >= 0
+        {  1, 0, 0, 4 },                 // x <= 4
+        {  0,-1, 0, 0 },                 // y >= 0
+        {  0, 0,-1, 0 },                 // z >= 0
+        {  0, r2, r2, r2 * 2 },          // y + z <= 2  (45° slope)
+    });
+
+    BrushGeometry geom;
+    const auto wOpt = geom.brushWedge(bsp, bi);
+    ASSERT_TRUE(wOpt.has_value()) << "axis-aligned 5-side prism should be detected";
+    const BrushWedge& w = *wOpt;
+
+    // Local +X = prism axis (length 4 along world X).
+    // Local +Y / +Z = the two right-angle legs (length 2 each in YZ).
+    EXPECT_NEAR(w.size[0], 4.0f, 1e-4f);
+    EXPECT_NEAR(w.size[1], 2.0f, 1e-4f);
+    EXPECT_NEAR(w.size[2], 2.0f, 1e-4f);
+
+    // Center is at the AABB center of the prism: (2, 1, 1).
+    EXPECT_NEAR(w.center[0], 2.0f, 1e-4f);
+    EXPECT_NEAR(w.center[1], 1.0f, 1e-4f);
+    EXPECT_NEAR(w.center[2], 1.0f, 1e-4f);
+
+    // Local +X column of rotation must be ±world X. (axisX is the prism
+    // axis; it should align with world X — sign chosen to point "into" the
+    // other triangle, which is at x = 4, so +X.)
+    EXPECT_NEAR(w.rotation[0],  1.0f, 1e-4f);  // R00: local x's world x
+    EXPECT_NEAR(w.rotation[3],  0.0f, 1e-4f);  // R10
+    EXPECT_NEAR(w.rotation[6],  0.0f, 1e-4f);  // R20
+
+    // Right-handedness: cross(col0, col1) == col2.
+    auto col = [&](int c) {
+        return std::array<float, 3>{ w.rotation[c], w.rotation[3 + c], w.rotation[6 + c] };
+    };
+    const auto c0 = col(0), c1 = col(1), c2 = col(2);
+    const std::array<float, 3> cx{
+        c0[1] * c1[2] - c0[2] * c1[1],
+        c0[2] * c1[0] - c0[0] * c1[2],
+        c0[0] * c1[1] - c0[1] * c1[0]
+    };
+    EXPECT_NEAR(cx[0], c2[0], 1e-4f);
+    EXPECT_NEAR(cx[1], c2[1], 1e-4f);
+    EXPECT_NEAR(cx[2], c2[2], 1e-4f);
+}
+
+TEST(BrushGeometryTest, WedgeOnNonRightTriangleReturnsNullopt) {
+    // Triangular prism whose cross-section is an isoceles triangle with
+    // 60°/60°/60° angles (no right angle) — not representable as a Roblox
+    // WedgePart, must return nullopt and let the caller fall back to OBB.
+    //
+    // Equilateral triangle in the YZ plane with vertices
+    //   (y=-1, z=0), (y=1, z=0), (y=0, z=√3)
+    // The three side normals (outward, in YZ) are:
+    //   bottom  : (0, -1)        dist = 0
+    //   right   : (√3/2,  1/2)   dist = √3/2     (line through (1,0)-(0,√3))
+    //   left    : (-√3/2, 1/2)   dist = √3/2
+    // Prism along +X from x=0 to x=2.
+    const float h = std::sqrt(3.0f) / 2.0f;
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0,    0,   0 },     // x >= 0
+        {  1, 0,    0,   2 },     // x <= 2
+        {  0, 0,   -1,   0 },     // z >= 0
+        {  0,  h, 0.5f,  h },     // upper-right slope
+        {  0, -h, 0.5f,  h },     // upper-left slope
+    });
+
+    BrushGeometry geom;
+    const auto verts = geom.brushVertices(bsp, bi);
+    ASSERT_EQ(verts.size(), 6u) << "test fixture should yield a triangular prism";
+    EXPECT_FALSE(geom.brushWedge(bsp, bi).has_value());
+}
+
+TEST(BrushGeometryTest, WedgeRotatedRampHasRotatedFrame) {
+    // 45° ramp rotated 90° about +Z so the prism axis runs along world +Y
+    // instead of +X. Same shape, just oriented differently.
+    //   y ∈ [0, 4]  (prism axis)
+    //   x ∈ [0, 2]
+    //   z ∈ [0, 2]
+    //   slope: x + z <= 2
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 },           // x >= 0
+        {  0,-1, 0, 0 },           // y >= 0
+        {  0, 1, 0, 4 },           // y <= 4
+        {  0, 0,-1, 0 },           // z >= 0
+        { r2, 0, r2, r2 * 2 },     // x + z <= 2
+    });
+
+    BrushGeometry geom;
+    const auto wOpt = geom.brushWedge(bsp, bi);
+    ASSERT_TRUE(wOpt.has_value());
+    const BrushWedge& w = *wOpt;
+
+    // Prism length = 4 along Y; both legs = 2.
+    EXPECT_NEAR(w.size[0], 4.0f, 1e-4f);
+    EXPECT_NEAR(w.size[1], 2.0f, 1e-4f);
+    EXPECT_NEAR(w.size[2], 2.0f, 1e-4f);
+
+    // Center at AABB midpoint (1, 2, 1).
+    EXPECT_NEAR(w.center[0], 1.0f, 1e-4f);
+    EXPECT_NEAR(w.center[1], 2.0f, 1e-4f);
+    EXPECT_NEAR(w.center[2], 1.0f, 1e-4f);
+
+    // Local +X (prism axis) must align with world +Y. So R10 (Y component
+    // of local x in world) ≈ 1.
+    EXPECT_NEAR(w.rotation[3], 1.0f, 1e-4f);
+
+    // Rotation must NOT be identity — prism axis is rotated.
+    const std::array<float, 9> identity = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+    float deviation = 0.0f;
+    for (int i = 0; i < 9; ++i) deviation += std::fabs(w.rotation[i] - identity[i]);
+    EXPECT_GT(deviation, 0.1f);
+}
+
+TEST(BrushGeometryTest, WedgeRecognizesPrismWithBevelPlanes) {
+    // Q2's qbsp adds axis-aligned bevel planes to the convex hull of each
+    // brush for collision. A 5-defining-plane ramp commonly ships with 2
+    // bevel planes (one per missing axis direction in its AABB), giving 7
+    // total sides. Bevels are tangent to the hull and contain at most 2
+    // hull vertices, so the prism detector must look at vertex/face shape
+    // rather than gating on numsides == 5. This test reproduces the case
+    // that made battle.bsp emit zero wedges before the fix.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        // 5 defining planes: same ramp as WedgeOnAxisAlignedRampMatchesGeometry.
+        { -1, 0, 0, 0 },             // x >= 0
+        {  1, 0, 0, 4 },             // x <= 4 (this would be a bevel, but here
+                                     //         it's defining — ramp is bounded
+                                     //         in +x by the slope edge instead)
+        {  0,-1, 0, 0 },             // y >= 0
+        {  0, 0,-1, 0 },             // z >= 0
+        {  0, r2, r2, r2 * 2 },      // y + z <= 2
+        // Two bevel planes added by qbsp because no defining plane has +y
+        // or +z normal:
+        {  0, 1, 0, 2 },             // y <= 2 (bevel, tangent to slope)
+        {  0, 0, 1, 2 },             // z <= 2 (bevel, tangent to slope)
+    });
+
+    BrushGeometry geom;
+    const auto wOpt = geom.brushWedge(bsp, bi);
+    ASSERT_TRUE(wOpt.has_value())
+        << "ramp with bevel planes must still be detected as a wedge";
+    EXPECT_NEAR(wOpt->size[0], 4.0f, 1e-4f);
+    EXPECT_NEAR(wOpt->size[1], 2.0f, 1e-4f);
+    EXPECT_NEAR(wOpt->size[2], 2.0f, 1e-4f);
+}
+
+TEST(BrushGeometryTest, WedgeThrowsOnOutOfRangeIndex) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_THROW(geom.brushWedge(bsp, 99), std::out_of_range);
+}
+
+// Returns total volume of all pieces in a decomposition.
+float decompositionVolume(const BrushDecomposition& d) {
+    float v = 0.0f;
+    for (const BrushPiece& p : d.pieces) {
+        const float pieceVol = p.size[0] * p.size[1] * p.size[2];
+        // Wedge half-volume since it's a triangular prism = 1/2 of bounding box.
+        v += (p.kind == BrushPiece::Kind::Wedge) ? pieceVol * 0.5f : pieceVol;
+    }
+    return v;
+}
+
+TEST(BrushGeometryTest, ChamferedBeamOnAabbCubeReturnsNullopt) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushChamferedBeam(bsp, 0).has_value());
+}
+
+TEST(BrushGeometryTest, ChamferedBeamOnTriangularPrismReturnsNullopt) {
+    // A pure triangular prism (5 sides, 6 verts) is phase-1 wedge territory,
+    // not phase-2 — the chamfered-beam detector must reject it so the
+    // converter routes it through brushWedge instead.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, {  1, 0, 0, 4 }, {  0,-1, 0, 0 }, {  0, 0,-1, 0 },
+        {  0, r2, r2, r2 * 2 },
+    });
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushChamferedBeam(bsp, bi).has_value());
+}
+
+TEST(BrushGeometryTest, ChamferedBeamOnAxisAlignedBeamProducesTwoBoxesAndWedge) {
+    // Axis-aligned beam, prism axis = +Y, length 4 (y in [0, 4]).
+    // Cross-section pentagon in XZ:
+    //   (0,0), (2,0), (2,1), (1,2), (0,2)
+    // This is a 2x2 square with the (+x, +z) corner cut by the chamfer plane
+    // x + z <= 3 at 45°. Decomposition: lower 2x1 box + upper-left 1x1 box +
+    // 1x1 right wedge filling the chamfer slope.
+    Bsp bsp;
+    const float r2 = std::sqrt(0.5f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 },              // x >= 0
+        {  1, 0, 0, 2 },              // x <= 2
+        {  0,-1, 0, 0 },              // y >= 0
+        {  0, 1, 0, 4 },              // y <= 4
+        {  0, 0,-1, 0 },              // z >= 0
+        {  0, 0, 1, 2 },              // z <= 2
+        { r2, 0, r2, r2 * 3 },        // x + z <= 3 (45° chamfer)
+    });
+
+    BrushGeometry geom;
+    const auto dOpt = geom.brushChamferedBeam(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value()) << "axis-aligned chamfered beam should decompose";
+    const auto& d = *dOpt;
+
+    // Three pieces: two Parts and one Wedge.
+    ASSERT_EQ(d.pieces.size(), 3u);
+    int parts = 0, wedges = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind == BrushPiece::Kind::Part) ++parts;
+        else if (p.kind == BrushPiece::Kind::Wedge) ++wedges;
+    }
+    EXPECT_EQ(parts, 2);
+    EXPECT_EQ(wedges, 1);
+
+    // Volumes: brush is a 2*2*4 box (= 16) minus a 1*1*4/2 chamfer wedge
+    // (= 2). Brush volume = 14. Decomposition must match.
+    EXPECT_NEAR(decompositionVolume(d), 14.0f, 1e-3f);
+}
+
+TEST(BrushGeometryTest, ChamferedBeamPiecesTileTheOriginalBoundingBox) {
+    // Looser geometric check: every piece center lies inside the brush AABB,
+    // and no piece extends outside it. Catches axis-mapping bugs.
+    Bsp bsp;
+    const float r2 = std::sqrt(0.5f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 10 },              // x >= -10
+        {  1, 0, 0, 10 },              // x <= 10
+        {  0,-1, 0, 0 },               // y >= 0
+        {  0, 1, 0, 8 },               // y <= 8
+        {  0, 0,-1, 0 },               // z >= 0
+        {  0, 0, 1, 6 },               // z <= 6
+        {  r2, 0, r2, (10 + 6) * r2 - r2 * 2 },  // chamfer cuts +x +z corner
+    });
+
+    BrushGeometry geom;
+    const auto dOpt = geom.brushChamferedBeam(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+
+    // All piece centers inside the AABB [-10..10] x [0..8] x [0..6].
+    for (const auto& p : dOpt->pieces) {
+        EXPECT_GE(p.center[0], -10.5f);
+        EXPECT_LE(p.center[0],  10.5f);
+        EXPECT_GE(p.center[1],  -0.5f);
+        EXPECT_LE(p.center[1],   8.5f);
+        EXPECT_GE(p.center[2],  -0.5f);
+        EXPECT_LE(p.center[2],   6.5f);
+    }
+}
+
+TEST(BrushGeometryTest, ChamferedBeamPropagatesTexname) {
+    Bsp bsp;
+    const float r2 = std::sqrt(0.5f);
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 2 }, { 0,-1, 0, 0 }, { 0, 1, 0, 4 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 }, { r2, 0, r2, r2 * 3 },
+    }, "walls/beam_chamfer");
+    BrushGeometry geom;
+    const auto dOpt = geom.brushChamferedBeam(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    EXPECT_EQ(dOpt->texname, std::string("walls/beam_chamfer"));
+}
+
+TEST(BrushGeometryTest, ChamferedBeamRecognizesPrismWithBevelPlanes) {
+    // Same chamfered beam as above plus a bevel plane that is tangent to
+    // the chamfer slope at one edge (touches 2 hull vertices). Detector
+    // must ignore the bevel and still return a 3-piece decomposition.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 2 }, { 0,-1, 0, 0 }, { 0, 1, 0, 4 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 }, { r2, 0, r2, r2 * 3 },
+        // Bevel plane along the y axis tangent to the chamfer face's right
+        // edge: the chamfer face contains the edge from (2,?,1) to (1,?,2);
+        // bevel y = 4 already exists. Skip extra bevel to avoid building an
+        // invalid hull — qbsp typically doesn't add redundant bevels here.
+    });
+    BrushGeometry geom;
+    EXPECT_TRUE(geom.brushChamferedBeam(bsp, bi).has_value());
+}
+
+TEST(BrushGeometryTest, ChamferedBeamHandlesChamferLongerThanRectangleSide) {
+    // Regression: when the chamfer cut is deep enough that the chamfer edge
+    // is *longer* than any rectangle side of the pentagon, the analyzer
+    // must still pick rectangle-aligned axes from parallel pentagon edges
+    // (not from the longest edge). Otherwise the bbox is computed in the
+    // wrong frame and pieces extend outside the brush envelope.
+    //
+    // Cross-section in YZ: rectangle [0,3] x [0,1] with the (+y, +z) corner
+    // chamfered at (~80% of the Y span, ~80% of Z span). The chamfer goes
+    // from (3, 0.2) to (0.6, 1) — length sqrt(2.4^2 + 0.8^2) ≈ 2.53, which
+    // is longer than the shortest rectangle sides (e.g. (0,1)->(0.6,1) =
+    // 0.6) and the chamfered side pieces.
+    Bsp bsp;
+    const float dy = 2.4f, dz = 0.8f;
+    const float L = std::sqrt(dy * dy + dz * dz);
+    const float ny = dz / L, nz = dy / L;
+    const float dist = ny * 3.0f + nz * 0.2f;  // plane through (3, 0.2)
+    const int bi = addCustomBrush(bsp, {
+        {  0,-1, 0, 0 },          // y >= 0
+        {  0, 1, 0, 3 },          // y <= 3
+        { -1, 0, 0, 0 },          // x >= 0
+        {  1, 0, 0, 4 },          // x <= 4
+        {  0, 0,-1, 0 },          // z >= 0
+        {  0, 0, 1, 1 },          // z <= 1
+        {  0, ny, nz, dist },     // chamfer
+    });
+
+    BrushGeometry geom;
+    const auto dOpt = geom.brushChamferedBeam(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+
+    // Every piece of the decomposition must lie inside the brush AABB
+    // [0..4] x [0..3] x [0..1].
+    for (const auto& p : dOpt->pieces) {
+        // Compute the piece's world-axis-aligned bounding box from its
+        // local-frame size and rotation.
+        const float halfX = p.size[0] * 0.5f;
+        const float halfY = p.size[1] * 0.5f;
+        const float halfZ = p.size[2] * 0.5f;
+        // Project local axes (rotation columns) onto each world axis to
+        // find the world-axis half-extent (sum of |R[w,k]| * half[k]).
+        for (int w = 0; w < 3; ++w) {
+            const float worldHalf =
+                std::fabs(p.rotation[w * 3 + 0]) * halfX +
+                std::fabs(p.rotation[w * 3 + 1]) * halfY +
+                std::fabs(p.rotation[w * 3 + 2]) * halfZ;
+            const float lo = p.center[w] - worldHalf;
+            const float hi = p.center[w] + worldHalf;
+            const float bbLo = (w == 0) ? 0.0f : (w == 1 ? 0.0f : 0.0f);
+            const float bbHi = (w == 0) ? 4.0f : (w == 1 ? 3.0f : 1.0f);
+            EXPECT_GE(lo, bbLo - 0.05f) << "piece extends below world axis " << w;
+            EXPECT_LE(hi, bbHi + 0.05f) << "piece extends above world axis " << w;
+        }
+    }
+}
+
+TEST(BrushGeometryTest, ChamferedBeamThrowsOnOutOfRangeIndex) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_THROW(geom.brushChamferedBeam(bsp, 99), std::out_of_range);
+}
+
 TEST(BrushGeometryTest, ObbEmptyBrushReturnsZeroSizeIdentity) {
     Bsp bsp;
     dbrush_t b{};

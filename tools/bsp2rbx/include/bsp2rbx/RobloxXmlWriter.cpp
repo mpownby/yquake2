@@ -39,33 +39,48 @@ void RobloxXmlWriter::emitPart(const RobloxPart& part) {
     if (!inDocument_) {
         throw std::logic_error("RobloxXmlWriter: emitPart called before beginDocument");
     }
+    emitBlock("Part", part.name, part.size, part.position, part.rotation, part.color);
+}
 
+void RobloxXmlWriter::emitWedge(const RobloxWedge& wedge) {
+    if (!inDocument_) {
+        throw std::logic_error("RobloxXmlWriter: emitWedge called before beginDocument");
+    }
+    emitBlock("WedgePart", wedge.name, wedge.size, wedge.position, wedge.rotation, wedge.color);
+}
+
+void RobloxXmlWriter::emitBlock(const char* className,
+                                const std::string& name,
+                                const std::array<float, 3>& size,
+                                const std::array<float, 3>& position,
+                                const std::array<float, 9>& rotation,
+                                const std::array<uint8_t, 3>& color) {
     stream_ << std::fixed << std::setprecision(6);
-    stream_ << "    <Item class=\"Part\" referent=\"RBX" << nextReferent_++ << "\">\n";
+    stream_ << "    <Item class=\"" << className << "\" referent=\"RBX" << nextReferent_++ << "\">\n";
     stream_ << "      <Properties>\n";
-    stream_ << "        <string name=\"Name\">" << part.name << "</string>\n";
+    stream_ << "        <string name=\"Name\">" << name << "</string>\n";
     stream_ << "        <bool name=\"Anchored\">true</bool>\n";
     stream_ << "        <Vector3 name=\"size\">"
-            << "<X>" << part.size[0] << "</X>"
-            << "<Y>" << part.size[1] << "</Y>"
-            << "<Z>" << part.size[2] << "</Z>"
+            << "<X>" << size[0] << "</X>"
+            << "<Y>" << size[1] << "</Y>"
+            << "<Z>" << size[2] << "</Z>"
             << "</Vector3>\n";
     stream_ << "        <CoordinateFrame name=\"CFrame\">"
-            << "<X>" << part.position[0] << "</X>"
-            << "<Y>" << part.position[1] << "</Y>"
-            << "<Z>" << part.position[2] << "</Z>"
-            << "<R00>" << part.rotation[0] << "</R00>"
-            << "<R01>" << part.rotation[1] << "</R01>"
-            << "<R02>" << part.rotation[2] << "</R02>"
-            << "<R10>" << part.rotation[3] << "</R10>"
-            << "<R11>" << part.rotation[4] << "</R11>"
-            << "<R12>" << part.rotation[5] << "</R12>"
-            << "<R20>" << part.rotation[6] << "</R20>"
-            << "<R21>" << part.rotation[7] << "</R21>"
-            << "<R22>" << part.rotation[8] << "</R22>"
+            << "<X>" << position[0] << "</X>"
+            << "<Y>" << position[1] << "</Y>"
+            << "<Z>" << position[2] << "</Z>"
+            << "<R00>" << rotation[0] << "</R00>"
+            << "<R01>" << rotation[1] << "</R01>"
+            << "<R02>" << rotation[2] << "</R02>"
+            << "<R10>" << rotation[3] << "</R10>"
+            << "<R11>" << rotation[4] << "</R11>"
+            << "<R12>" << rotation[5] << "</R12>"
+            << "<R20>" << rotation[6] << "</R20>"
+            << "<R21>" << rotation[7] << "</R21>"
+            << "<R22>" << rotation[8] << "</R22>"
             << "</CoordinateFrame>\n";
     stream_ << "        <Color3uint8 name=\"Color3uint8\">"
-            << packColor3uint8(part.color) << "</Color3uint8>\n";
+            << packColor3uint8(color) << "</Color3uint8>\n";
     stream_ << "      </Properties>\n";
     stream_ << "    </Item>\n";
 }

@@ -11,6 +11,7 @@ public:
     virtual ~IRobloxXmlWriter() = default;
     virtual void beginDocument() = 0;
     virtual void emitPart(const RobloxPart& part) = 0;
+    virtual void emitWedge(const RobloxWedge& wedge) = 0;
     virtual std::string endDocument() = 0;
 };
 

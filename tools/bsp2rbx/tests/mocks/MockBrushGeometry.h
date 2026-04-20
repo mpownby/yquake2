@@ -14,6 +14,10 @@ public:
                 (const Bsp& bsp, int brushIndex), (override));
     MOCK_METHOD(BrushObb, brushObb,
                 (const Bsp& bsp, int brushIndex), (override));
+    MOCK_METHOD(std::optional<BrushWedge>, brushWedge,
+                (const Bsp& bsp, int brushIndex), (override));
+    MOCK_METHOD(std::optional<BrushDecomposition>, brushChamferedBeam,
+                (const Bsp& bsp, int brushIndex), (override));
 };
 
 } // namespace bsp2rbx

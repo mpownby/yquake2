@@ -49,9 +49,56 @@ void BspConverter::convert(const std::filesystem::path& inBsp,
     for (int i = 0; i < count; ++i) {
         if (worldspawn.count(i) == 0) continue;
         if (!filter_->keep(*bsp, i)) continue;
+
+        const std::string brushName = "brush_" + std::to_string(i);
+        if (auto wOpt = geometry_->brushWedge(*bsp, i)) {
+            const BrushWedge& w = *wOpt;
+            RobloxWedge wedge{};
+            wedge.name  = brushName;
+            wedge.color = colorFromTexname(w.texname);
+            for (int c = 0; c < 3; ++c) {
+                wedge.size[c]     = w.size[c]   * scale;
+                wedge.position[c] = w.center[c] * scale;
+            }
+            wedge.rotation = w.rotation;
+            xml_->emitWedge(wedge);
+            continue;
+        }
+
+        if (auto dOpt = geometry_->brushChamferedBeam(*bsp, i)) {
+            const BrushDecomposition& d = *dOpt;
+            const auto col = colorFromTexname(d.texname);
+            int sub = 0;
+            for (const BrushPiece& p : d.pieces) {
+                const std::string subName = brushName + "_" + std::to_string(sub++);
+                if (p.kind == BrushPiece::Kind::Part) {
+                    RobloxPart part{};
+                    part.name  = subName;
+                    part.color = col;
+                    for (int c = 0; c < 3; ++c) {
+                        part.size[c]     = p.size[c]   * scale;
+                        part.position[c] = p.center[c] * scale;
+                    }
+                    part.rotation = p.rotation;
+                    xml_->emitPart(part);
+                } else {
+                    RobloxWedge wedge{};
+                    wedge.name  = subName;
+                    wedge.color = col;
+                    for (int c = 0; c < 3; ++c) {
+                        wedge.size[c]     = p.size[c]   * scale;
+                        wedge.position[c] = p.center[c] * scale;
+                    }
+                    wedge.rotation = p.rotation;
+                    xml_->emitWedge(wedge);
+                }
+            }
+            continue;
+        }
+
         const BrushObb o = geometry_->brushObb(*bsp, i);
         RobloxPart part{};
-        part.name = "brush_" + std::to_string(i);
+        part.name = brushName;
         part.color = colorFromTexname(o.texname);
         for (int c = 0; c < 3; ++c) {
             part.size[c]     = o.size[c]   * scale;

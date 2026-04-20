@@ -48,12 +48,61 @@ struct BrushObb {
     std::string           texname;
 };
 
+// Right-angled triangular prism brush, ready to emit as a Roblox WedgePart.
+// Convention matches WedgePart's local geometry:
+//   - prism axis  -> local +X (length `size[0]`)
+//   - one leg     -> local +Y (length `size[1]`)
+//   - other leg   -> local +Z (length `size[2]`)
+//   - the right-angle vertex on the -X triangle face is at local
+//     (-X/2, -Y/2, -Z/2); the chopped-off corner of the bounding box is at
+//     (+Y/2, +Z/2) on each ±X face.
+// `rotation` columns are the world-space directions of the local +X, +Y, +Z
+// axes, forming a right-handed orthonormal basis.
+struct BrushWedge {
+    std::array<float, 3>  center;
+    std::array<float, 3>  size;
+    std::array<float, 9>  rotation;
+    int                   modelIndex;
+    std::string           texname;
+};
+
 struct RobloxPart {
     std::array<float, 3>   position;
     std::array<float, 3>   size;
     std::array<float, 9>   rotation;  // identity by default; row-major 3x3
     std::array<uint8_t, 3> color;
     std::string            name;
+};
+
+// Same payload as RobloxPart; kept distinct for type-safe routing through
+// IRobloxXmlWriter::emitWedge so callers cannot accidentally emit a wedge as
+// a plain Part (they have different default geometry in Studio).
+struct RobloxWedge {
+    std::array<float, 3>   position;
+    std::array<float, 3>   size;
+    std::array<float, 9>   rotation;
+    std::array<uint8_t, 3> color;
+    std::string            name;
+};
+
+// One piece of a multi-instance decomposition of a brush. `kind` chooses
+// whether the converter emits a Roblox Part or WedgePart for this piece.
+// Coordinates are in Q2 units (the converter scales when emitting).
+struct BrushPiece {
+    enum class Kind { Part, Wedge };
+    std::array<float, 3>  center;
+    std::array<float, 3>  size;
+    std::array<float, 9>  rotation;
+    Kind                  kind;
+};
+
+// Multi-instance decomposition of a brush whose convex hull is *not* a single
+// box or wedge — typically a chamfered beam (pentagonal-prism cross-section)
+// returned as 2 boxes + 1 wedge. All pieces share the brush's texture.
+struct BrushDecomposition {
+    std::vector<BrushPiece>  pieces;
+    int                      modelIndex;
+    std::string              texname;
 };
 
 } // namespace bsp2rbx

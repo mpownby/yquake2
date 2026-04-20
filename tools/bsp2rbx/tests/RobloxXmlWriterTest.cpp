@@ -102,5 +102,67 @@ TEST(RobloxXmlWriterTest, ReferentsAreUnique) {
     EXPECT_TRUE(contains(xml, "referent=\"RBX2\""));
 }
 
+TEST(RobloxXmlWriterTest, EmitsWedgeAsWedgePartClass) {
+    // Wedge geometry must land in <Item class="WedgePart"> — emitting as a
+    // plain Part would render a box in Studio instead of the slanted wedge
+    // and silently regress visual fidelity for ramp brushes.
+    RobloxXmlWriter w;
+    w.beginDocument();
+    RobloxWedge wedge{};
+    wedge.position = { 1.0f, 2.0f, 3.0f };
+    wedge.size     = { 4.0f, 5.0f, 6.0f };
+    wedge.rotation = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+    wedge.color    = { 0, 255, 0 };
+    wedge.name     = "ramp_42";
+    w.emitWedge(wedge);
+    const std::string xml = w.endDocument();
+
+    EXPECT_TRUE(contains(xml, "<Item class=\"WedgePart\""));
+    EXPECT_TRUE(contains(xml, "<string name=\"Name\">ramp_42</string>"));
+    EXPECT_TRUE(contains(xml, "<bool name=\"Anchored\">true</bool>"));
+    EXPECT_TRUE(contains(xml, "<X>1.000000</X><Y>2.000000</Y><Z>3.000000</Z>"));
+    // 0xFF000000 | (0<<16) | (255<<8) | 0 = 4278255360
+    EXPECT_TRUE(contains(xml, "<Color3uint8 name=\"Color3uint8\">4278255360</Color3uint8>"));
+}
+
+TEST(RobloxXmlWriterTest, EmitsWedgeRotationIntoCFrame) {
+    // 90° about +Z, row-major.
+    RobloxXmlWriter w;
+    w.beginDocument();
+    RobloxWedge wedge{};
+    wedge.rotation = { 0, -1, 0,  1, 0, 0,  0, 0, 1 };
+    wedge.size     = { 1.0f, 1.0f, 1.0f };
+    w.emitWedge(wedge);
+    const std::string xml = w.endDocument();
+
+    EXPECT_TRUE(contains(xml, "<R00>0.000000</R00>"));
+    EXPECT_TRUE(contains(xml, "<R01>-1.000000</R01>"));
+    EXPECT_TRUE(contains(xml, "<R10>1.000000</R10>"));
+    EXPECT_TRUE(contains(xml, "<R22>1.000000</R22>"));
+}
+
+TEST(RobloxXmlWriterTest, EmitWedgeWithoutBeginThrows) {
+    RobloxXmlWriter w;
+    RobloxWedge wedge{};
+    EXPECT_THROW(w.emitWedge(wedge), std::logic_error);
+}
+
+TEST(RobloxXmlWriterTest, MixingPartsAndWedgesShareReferentSequence) {
+    RobloxXmlWriter w;
+    w.beginDocument();
+    RobloxPart p{};
+    p.name = "p";
+    w.emitPart(p);
+    RobloxWedge wedge{};
+    wedge.name = "w";
+    w.emitWedge(wedge);
+    const std::string xml = w.endDocument();
+    EXPECT_TRUE(contains(xml, "referent=\"RBX0\""));  // Model
+    EXPECT_TRUE(contains(xml, "referent=\"RBX1\""));  // Part
+    EXPECT_TRUE(contains(xml, "referent=\"RBX2\""));  // WedgePart
+    EXPECT_TRUE(contains(xml, "<Item class=\"Part\""));
+    EXPECT_TRUE(contains(xml, "<Item class=\"WedgePart\""));
+}
+
 } // namespace
 } // namespace bsp2rbx

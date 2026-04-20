@@ -3,7 +3,92 @@
 Snapshot of what's done and what's next. Update this file as work moves
 forward so a fresh session can pick up where the last one left off.
 
-Last updated: 2026-04-19.
+Last updated: 2026-04-20.
+
+## Done — bsp2rbx milestone 3 phase 2 (chamfered-beam decomposition)
+
+Phase 2 detects **pentagonal-prism brushes** (a box with one edge chamfered —
+7 faces, 10 hull vertices) and decomposes each into **2 axis-aligned Parts +
+1 WedgePart** that exactly tile the pentagonal cross-section. Was the right
+fit for `brush_345` in `battle.bsp`, the long ceiling beam visible in the
+corner near (-1076, -1070, 280) in Q2 — previously emitted as a fat OBB
+Part that filled the entire bbox of the (un-chamfered) cube.
+
+**Algorithm** ([BrushGeometry.cpp:`brushChamferedBeam`](tools/bsp2rbx/include/bsp2rbx/BrushGeometry.cpp)):
+1. Vertex/face shape check: 10 unique hull vertices + 2 pentagon faces + 5
+   rectangle faces (other faces with ≤ 2 verts are ignored — handles qbsp
+   bevels).
+2. Pentagon perimeter walked; rectangle axes identified by **parallel-edge
+   pairs** (4 of 5 pentagon edges come in 2 parallel pairs; the chamfer is
+   the lone unpaired edge). Important: an earlier "longest pentagon edge"
+   heuristic broke when the chamfer was the longest side (true for
+   `brush_345`, where the chamfer cuts ~67% of the cross-section).
+3. Local 2D bbox + missing-corner identification.
+4. Decompose into lower-strip Box + upper-corner Box + slope WedgePart
+   that share the brush's texture.
+
+**Result on stock maps** (vs phase 1 totals):
+- battle:    374 → **382** (3 chamfered-beam brushes detected; +6 instances)
+- base64:   5277 → **5331**
+- city64:   4254 → **4284**
+- arena7dm:  487 → **495**
+- bldstorm: 1343 → **1381**
+
+Tests: **72 total, 100% pass** (71 + 1 skipped e2e). 8 new tests covering
+detection, volume, AABB containment, texname propagation, bevel resilience,
+out-of-range, and the chamfer-as-longest-edge regression.
+
+**Visually verified in Studio** at the Q2 corner the user flagged:
+`brush_345` decomposes into 3 pieces that together form the chamfered
+ceiling-beam cross-section (long thin top strip + small lower-left box +
+gentle ~23° slope wedge). The "fat rectangle" artifact for that brush is
+gone.
+
+**Still not handled** — the prominent triangular *corner* fold visible in
+the same Q2 view (yellow inverted-pyramid in Studio) is a corner-chamfer
+brush (one plane lops off a single box vertex → 7 vertices, not 10). That's
+**phase 3** — a Part + CornerWedgePart decomposition.
+
+## Done — bsp2rbx milestone 3 phase 1 (WedgePart for triangular prisms)
+
+Empirical milestone 2 finding: stock Q2 maps have no truly rotated brushes, but
+they have *lots* of chamfered/triangular-prism brushes (ramps, trim, edge
+chamfers) that get rendered as fat AABBs. Phase 1 of milestone 3 plugs that
+gap by detecting right-angled triangular prisms and emitting them as Roblox
+**WedgePart** primitives (no external mesh asset needed — Studio renders these
+natively).
+
+**Result on stock maps** (parts → parts + wedges; total preserved):
+- battle.bsp:   374 → 360 + 14
+- base64.bsp:  5424 → 5159 + 118
+- city64.bsp:  ~~~  → 4080 + 174
+- arena7dm:    ~~~  → 465  + 22
+- bldstorm:    ~~~  → 1274 + 69
+
+Tests: **62 total, 100% pass** (61 + 1 skipped e2e).
+
+**New code**:
+- `BrushWedge` / `RobloxWedge` structs in [tools/bsp2rbx/include/bsp2rbx/Bsp.h](tools/bsp2rbx/include/bsp2rbx/Bsp.h)
+- `IBrushGeometry::brushWedge` — returns `std::optional<BrushWedge>`; non-empty
+  only when the brush is a right-angled triangular prism. Resilient to qbsp's
+  bevel planes (vertex-shape based, not `numsides`-gated) and to the duplicate
+  vertices `brushVertices` produces from over-determined plane triples.
+- `IRobloxXmlWriter::emitWedge` — writes `<Item class="WedgePart">`. Shared
+  XML formatting helper extracted from the existing `emitPart`.
+- `BspConverter::convert` now tries `brushWedge` first per brush; falls back
+  to `brushObb` when the optional is empty. Existing 6-arg ctor unchanged.
+
+**WedgePart orientation convention** chosen but not yet eyeball-verified in
+Studio: prism axis = local +X, the two triangle legs map to local +Y and +Z,
+right-angle vertex on the −X triangle face sits at local (−X/2, −Y/2, −Z/2).
+If Studio draws the wedge mirrored or rotated, the axis assignment in
+[BrushGeometry::brushWedge](tools/bsp2rbx/include/bsp2rbx/BrushGeometry.cpp)
+is the single place to flip.
+
+**Phase 2** (next): non-right-triangle prisms (must return nullopt today —
+Roblox WedgePart can't represent a non-right triangle). Phase 3: corner
+chamfers — boxes with a single tetrahedral cut, decomposable into Part +
+CornerWedgePart.
 
 ## Done — bsp2rbx milestone 2 (OBB / rotated Parts, option 1)
 
