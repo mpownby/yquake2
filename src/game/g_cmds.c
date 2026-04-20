@@ -534,6 +534,31 @@ Cmd_Noclip_f(edict_t *ent)
 }
 
 /*
+ * argv(0) where
+ * Prints the player's current position and camera direction.
+ */
+static void
+Cmd_Where_f(edict_t *ent)
+{
+	vec3_t forward;
+
+	if (!ent || !ent->client)
+	{
+		return;
+	}
+
+	AngleVectors(ent->client->v_angle, forward, NULL, NULL);
+
+	gi.cprintf(ent, PRINT_HIGH,
+			"position: %.2f %.2f %.2f\n"
+			"angles:   %.2f %.2f %.2f (pitch yaw roll)\n"
+			"forward:  %.3f %.3f %.3f\n",
+			ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+			ent->client->v_angle[0], ent->client->v_angle[1], ent->client->v_angle[2],
+			forward[0], forward[1], forward[2]);
+}
+
+/*
  * Use an inventory item
  */
 static void
@@ -1934,6 +1959,10 @@ ClientCommand(edict_t *ent)
 	else if (Q_stricmp(cmd, "noclip") == 0)
 	{
 		Cmd_Noclip_f(ent);
+	}
+	else if (Q_stricmp(cmd, "where") == 0)
+	{
+		Cmd_Where_f(ent);
 	}
 	else if (Q_stricmp(cmd, "inven") == 0)
 	{
