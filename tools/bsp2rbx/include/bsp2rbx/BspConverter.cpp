@@ -133,6 +133,11 @@ void BspConverter::convert(const std::filesystem::path& inBsp,
             continue;
         }
 
+        if (auto dOpt = geometry_->brushHexagonalFloor(*bsp, i)) {
+            emitDecomposition(*dOpt);
+            continue;
+        }
+
         const BrushObb o = geometry_->brushObb(*bsp, i);
         RobloxPart part{};
         part.name     = brushName;

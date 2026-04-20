@@ -118,6 +118,7 @@ int main(int argc, char** argv) {
         if (geom.brushWedge(*bsp, static_cast<int>(i)).has_value())              path = "brushWedge (phase 1)";
         else if (geom.brushChamferedBeam(*bsp, static_cast<int>(i)).has_value()) path = "brushChamferedBeam (phase 2)";
         else if (geom.brushCornerChamfer(*bsp, static_cast<int>(i)).has_value()) path = "brushCornerChamfer (phase 3)";
+        else if (geom.brushHexagonalFloor(*bsp, static_cast<int>(i)).has_value()) path = "brushHexagonalFloor (phase 4)";
 
         std::printf("\n brush %4zu: %s\n", i, sig.c_str());
         std::printf("   bbox: (%.2f..%.2f, %.2f..%.2f, %.2f..%.2f)\n",

@@ -832,6 +832,121 @@ TEST(BrushGeometryTest, CornerChamferThrowsOnOutOfRangeIndex) {
     EXPECT_THROW(geom.brushCornerChamfer(bsp, 99), std::out_of_range);
 }
 
+TEST(BrushGeometryTest, HexagonalFloorOnAabbCubeReturnsNullopt) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushHexagonalFloor(bsp, 0).has_value());
+}
+
+TEST(BrushGeometryTest, HexagonalFloorOnPentagonalPrismReturnsNullopt) {
+    // A box with ONE corner chamfered (single chamfer beam) — the hexagonal
+    // floor detector must reject it so the ChamferedBeam detector handles it.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 2 }, { 0,-1, 0, 0 }, { 0, 1, 0, 4 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 }, { r2, 0, r2, r2 * 3 },
+    });
+    BrushGeometry geom;
+    EXPECT_FALSE(geom.brushHexagonalFloor(bsp, bi).has_value());
+}
+
+TEST(BrushGeometryTest, HexagonalFloorOnBoxWithTwoAdjacentCornersChamfered) {
+    // Box x in [0,10], y in [0,10], z in [0,2] with BOTH corners on the
+    // -X side (i.e. (0,0) and (0,10)) chamfered by vertical 45° planes.
+    // Top face is a hexagon with 4 axis-aligned edges + 2 diagonal edges.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 },            // x >= 0
+        {  1, 0, 0, 10 },           // x <= 10
+        {  0,-1, 0, 0 },            // y >= 0
+        {  0, 1, 0, 10 },           // y <= 10
+        {  0, 0,-1, 0 },            // z >= 0
+        {  0, 0, 1, 2 },            // z <= 2
+        { -r2,  r2, 0,  6 * r2 },   // chamfer at (0,10) corner, 45°, cutU=cutV=4
+        { -r2, -r2, 0, -4 * r2 },   // chamfer at (0, 0) corner, 45°, cutU=cutV=4
+    });
+    BrushGeometry geom;
+    const auto dOpt = geom.brushHexagonalFloor(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value()) << "double-chamfered floor must decompose";
+    const auto& d = *dOpt;
+
+    ASSERT_EQ(d.pieces.size(), 4u);
+    int parts = 0, wedges = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind == BrushPiece::Kind::Part) ++parts;
+        else if (p.kind == BrushPiece::Kind::Wedge) ++wedges;
+    }
+    EXPECT_EQ(parts, 2);
+    EXPECT_EQ(wedges, 2);
+
+    // Volume: full bbox (10*10*2 = 200) minus two chamfer triangular
+    // prisms (0.5*4*4*2 = 16 each) = 200 - 32 = 168.
+    EXPECT_NEAR(decompositionVolume(d), 168.0f, 1e-3f);
+
+    // All piece centers must lie inside the brush AABB.
+    for (const auto& p : d.pieces) {
+        EXPECT_GE(p.center[0], -0.01f); EXPECT_LE(p.center[0], 10.01f);
+        EXPECT_GE(p.center[1], -0.01f); EXPECT_LE(p.center[1], 10.01f);
+        EXPECT_GE(p.center[2], -0.01f); EXPECT_LE(p.center[2],  2.01f);
+    }
+}
+
+TEST(BrushGeometryTest, HexagonalFloorHandlesSlopedBottomLikeBrush313) {
+    // Brush 313 signature: box x in [-992,-832], y in [-1104,-880], z in
+    // [224,256] with two vertical corner chamfers on the -X side AND a
+    // sloped bottom plane. The detector must ignore the slope (treating
+    // the solid as a vertical hexagonal prism from AABB minZ to +Z face)
+    // and still return 4 pieces — the slope's volume loss is approximated.
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1,  0,  0,  992 },                 // x >= -992
+        {  1,  0,  0, -832 },                 // x <= -832
+        {  0, -1,  0,  1104 },                // y >= -1104
+        {  0,  1,  0, -880 },                 // y <= -880
+        {  0,  0, -1, -224 },                 // z >= 224
+        {  0,  0,  1,  256 },                 // z <= 256
+        { -0.6f,  0.8f, 0,  -166.4f },        // chamfer at -X/+Y corner
+        { -0.6f, -0.8f, 0, 1420.8f },         // chamfer at -X/-Y corner
+        { -0.196f, 0, -0.981f, -47.068f },    // sloped bottom (ignored)
+    });
+    BrushGeometry geom;
+    const auto dOpt = geom.brushHexagonalFloor(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    EXPECT_EQ(dOpt->pieces.size(), 4u);
+
+    // All pieces within the brush AABB with a small tolerance.
+    for (const auto& p : dOpt->pieces) {
+        EXPECT_GE(p.center[0], -992.5f);
+        EXPECT_LE(p.center[0], -831.5f);
+        EXPECT_GE(p.center[1], -1104.5f);
+        EXPECT_LE(p.center[1],  -879.5f);
+        EXPECT_GE(p.center[2],   223.5f);
+        EXPECT_LE(p.center[2],   256.5f);
+    }
+}
+
+TEST(BrushGeometryTest, HexagonalFloorPropagatesTexname) {
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0 }, { 1, 0, 0, 10 }, { 0,-1, 0, 0 }, { 0, 1, 0, 10 },
+        { 0, 0,-1, 0 }, { 0, 0, 1, 2 },
+        { -r2,  r2, 0,  6 * r2 }, { -r2, -r2, 0, -4 * r2 },
+    }, "floors/lava");
+    BrushGeometry geom;
+    const auto dOpt = geom.brushHexagonalFloor(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    EXPECT_EQ(dOpt->texname, std::string("floors/lava"));
+}
+
+TEST(BrushGeometryTest, HexagonalFloorThrowsOnOutOfRangeIndex) {
+    Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
+    BrushGeometry geom;
+    EXPECT_THROW(geom.brushHexagonalFloor(bsp, 99), std::out_of_range);
+}
+
 TEST(BrushGeometryTest, ChamferedBeamThrowsOnOutOfRangeIndex) {
     Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
     BrushGeometry geom;

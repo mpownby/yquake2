@@ -44,6 +44,16 @@ public:
     // isn't a corner-chamfer.
     virtual std::optional<BrushDecomposition>
         brushCornerChamfer(const Bsp& bsp, int brushIndex) = 0;
+    // Hexagonal-floor brush — a box with two adjacent corners on the same
+    // side clipped by vertical chamfer planes, producing a hexagonal top
+    // face (4 axis-aligned edges + 2 diagonal edges). Additional cuts on
+    // other faces (e.g. a sloped bottom) are ignored: the brush is
+    // approximated as a vertical hexagonal prism extruded from AABB minZ
+    // to the top face's Z. Decomposition = 2 axis-aligned Parts + 2
+    // WedgeParts filling the chamfer corners. Returns nullopt when the
+    // top face is not a double-chamfered hexagon.
+    virtual std::optional<BrushDecomposition>
+        brushHexagonalFloor(const Bsp& bsp, int brushIndex) = 0;
 };
 
 } // namespace bsp2rbx

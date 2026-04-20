@@ -1280,4 +1280,350 @@ BrushGeometry::brushCornerChamfer(const Bsp& bsp, int brushIndex) {
     return d;
 }
 
+std::optional<BrushDecomposition>
+BrushGeometry::brushHexagonalFloor(const Bsp& bsp, int brushIndex) {
+    validateBrushIndex(bsp, brushIndex);
+    const dbrush_t& brush = bsp.brushes[static_cast<size_t>(brushIndex)];
+
+    // Signature: the brush has an axis-aligned +Z face that is a hexagon
+    // (6 verts) with exactly 4 axis-aligned XY edges and 2 diagonal edges.
+    // The 2 diagonals clip two adjacent corners of the hexagon's XY bbox,
+    // both lying on the SAME side (the "cut side"). Any additional cuts
+    // on other faces (e.g. a sloped bottom plane) are ignored: the brush
+    // is approximated by extruding the hexagon straight down to the AABB
+    // minZ. Chamfers are assumed symmetric (top and bottom cuts on the
+    // cut side have matching cutV); asymmetric variants return nullopt.
+    const auto verts = dedupVerts(brushVertices(bsp, brushIndex));
+    if (verts.size() < 6) return std::nullopt;
+
+    const auto faces = collectFaceVertSets(bsp, brush, verts);
+    if (faces.empty()) return std::nullopt;
+
+    // Find the +Z top face: strictly axis-aligned, 6 verts on it.
+    int topFaceIdx = -1;
+    for (int i = 0; i < static_cast<int>(faces.size()); ++i) {
+        const Vec3& n = faces[i].normal;
+        if (n.z > 0.999f &&
+            std::fabs(n.x) < kAxisDotEps &&
+            std::fabs(n.y) < kAxisDotEps &&
+            faces[i].vertIdx.size() == 6) {
+            topFaceIdx = i;
+            break;
+        }
+    }
+    if (topFaceIdx < 0) return std::nullopt;
+
+    // Order hexagon perimeter (CCW viewed from above / against face normal).
+    auto ordered = orderFacePerimeter(verts, faces[topFaceIdx]);
+    if (ordered.size() != 6) return std::nullopt;
+
+    // Project to XY and compute bbox.
+    std::array<float, 6> px{}, py{};
+    float uMin = std::numeric_limits<float>::infinity();
+    float uMax = -std::numeric_limits<float>::infinity();
+    float vMin = std::numeric_limits<float>::infinity();
+    float vMax = -std::numeric_limits<float>::infinity();
+    for (int i = 0; i < 6; ++i) {
+        px[i] = ordered[i].x;
+        py[i] = ordered[i].y;
+        if (px[i] < uMin) uMin = px[i];
+        if (px[i] > uMax) uMax = px[i];
+        if (py[i] < vMin) vMin = py[i];
+        if (py[i] > vMax) vMax = py[i];
+    }
+    const float uExt = uMax - uMin;
+    const float vExt = vMax - vMin;
+    if (uExt < 1e-4f || vExt < 1e-4f) return std::nullopt;
+
+    // Classify each of the 6 perimeter edges: axis-aligned along +X, -X,
+    // +Y, -Y, or diagonal.
+    enum class EdgeKind { AxisX, AxisY, Diagonal };
+    std::array<EdgeKind, 6> edgeKind{};
+    constexpr float kEdgeAxisEps = 0.05f;
+    int axisEdges = 0, diagEdges = 0;
+    for (int i = 0; i < 6; ++i) {
+        const int j = (i + 1) % 6;
+        const float dx = px[j] - px[i];
+        const float dy = py[j] - py[i];
+        if (std::fabs(dy) < kEdgeAxisEps && std::fabs(dx) > kEdgeAxisEps) {
+            edgeKind[i] = EdgeKind::AxisX;
+            ++axisEdges;
+        } else if (std::fabs(dx) < kEdgeAxisEps && std::fabs(dy) > kEdgeAxisEps) {
+            edgeKind[i] = EdgeKind::AxisY;
+            ++axisEdges;
+        } else {
+            edgeKind[i] = EdgeKind::Diagonal;
+            ++diagEdges;
+        }
+    }
+    if (axisEdges != 4 || diagEdges != 2) return std::nullopt;
+
+    // Identify which two of the 4 bbox corners are MISSING (chamfered off).
+    // A corner is "present" if some hexagon vertex lies within tolerance.
+    struct Corner { float u, v; };
+    const std::array<Corner, 4> corners{ { { uMin, vMin }, { uMax, vMin },
+                                           { uMax, vMax }, { uMin, vMax } } };
+    std::array<bool, 4> cornerPresent{ false, false, false, false };
+    constexpr float kCornerEps = 0.5f;
+    for (int c = 0; c < 4; ++c) {
+        for (int i = 0; i < 6; ++i) {
+            if (std::fabs(px[i] - corners[c].u) < kCornerEps &&
+                std::fabs(py[i] - corners[c].v) < kCornerEps) {
+                cornerPresent[c] = true;
+                break;
+            }
+        }
+    }
+    int missingCount = 0, missA = -1, missB = -1;
+    for (int c = 0; c < 4; ++c) {
+        if (!cornerPresent[c]) {
+            ++missingCount;
+            if (missA < 0) missA = c;
+            else           missB = c;
+        }
+    }
+    if (missingCount != 2) return std::nullopt;
+    // The two missing corners must be ADJACENT on the bbox (share a side).
+    // Corners are ordered 0=(uMin,vMin), 1=(uMax,vMin), 2=(uMax,vMax),
+    // 3=(uMin,vMax). Adjacent pairs: (0,1) share -V, (1,2) share +U,
+    // (2,3) share +V, (3,0) share -U.
+    enum class CutSide { Umin, Umax, Vmin, Vmax };
+    CutSide cutSide;
+    if      (missA == 0 && missB == 3) cutSide = CutSide::Umin;
+    else if (missA == 1 && missB == 2) cutSide = CutSide::Umax;
+    else if (missA == 0 && missB == 1) cutSide = CutSide::Vmin;
+    else if (missA == 2 && missB == 3) cutSide = CutSide::Vmax;
+    else return std::nullopt;
+
+    // Compute cutU (perpendicular to cut side, measured INTO the bbox) and
+    // cutV (along cut side, measured from each missing corner toward its
+    // neighbor on the cut side). Require both chamfers to be symmetric
+    // (matching cutU and mirrored cutV).
+    auto pickCutUV = [&](float missU, float missV, bool cutAlongU) {
+        // Find the chamfer-endpoint verts nearest to this missing corner —
+        // they share exactly one coordinate with the missing corner, and
+        // are the smallest-distance such vertices (a box corner at the far
+        // end of the same side would share the same coordinate but is
+        // not a chamfer endpoint).
+        constexpr float kInf = std::numeric_limits<float>::infinity();
+        float bestDeltaAcross = kInf;
+        float bestDeltaAlong  = kInf;
+        for (int i = 0; i < 6; ++i) {
+            const float du = std::fabs(px[i] - missU);
+            const float dv = std::fabs(py[i] - missV);
+            if (cutAlongU) {
+                // cutSide parallel to U: chamfer endpoint on cut side
+                // shares V with missing (v==missV, u moved into bbox).
+                if (du > kEdgeAxisEps && dv < kEdgeAxisEps) {
+                    if (du < bestDeltaAlong) bestDeltaAlong = du;
+                }
+                // chamfer endpoint on adjacent side: u==missU, v moved in.
+                if (dv > kEdgeAxisEps && du < kEdgeAxisEps) {
+                    if (dv < bestDeltaAcross) bestDeltaAcross = dv;
+                }
+            } else {
+                // cutSide parallel to V: chamfer endpoint on cut side
+                // shares U with missing.
+                if (dv > kEdgeAxisEps && du < kEdgeAxisEps) {
+                    if (dv < bestDeltaAlong) bestDeltaAlong = dv;
+                }
+                if (du > kEdgeAxisEps && dv < kEdgeAxisEps) {
+                    if (du < bestDeltaAcross) bestDeltaAcross = du;
+                }
+            }
+        }
+        if (bestDeltaAcross == kInf) bestDeltaAcross = 0.0f;
+        if (bestDeltaAlong  == kInf) bestDeltaAlong  = 0.0f;
+        return std::pair<float, float>{ bestDeltaAcross, bestDeltaAlong };
+    };
+
+    const bool cutAlongU = (cutSide == CutSide::Vmin || cutSide == CutSide::Vmax);
+    const auto uvA = pickCutUV(corners[missA].u, corners[missA].v, cutAlongU);
+    const auto uvB = pickCutUV(corners[missB].u, corners[missB].v, cutAlongU);
+    // For a cut along V (cutSide Umin/Umax), uvA.first is cutU, uvA.second is cutV.
+    // For a cut along U, swap interpretation.
+    float cutPerpA = uvA.first,  cutAlongA = uvA.second;
+    float cutPerpB = uvB.first,  cutAlongB = uvB.second;
+    if (cutPerpA < 1e-4f || cutPerpB < 1e-4f ||
+        cutAlongA < 1e-4f || cutAlongB < 1e-4f) return std::nullopt;
+    // Symmetry: both chamfers must have the same perpendicular depth
+    // (cutU) so that the central strip is rectangular.
+    if (std::fabs(cutPerpA - cutPerpB) > kCornerEps) return std::nullopt;
+    const float cutU = cutPerpA;       // depth into bbox from cut side
+    const float cutVA = cutAlongA;     // chamfer A cut along cut side
+    const float cutVB = cutAlongB;     // chamfer B cut along cut side
+    // Along-cut-side dimensions must fit inside the bbox.
+    const float cutSideExt = cutAlongU ? uExt : vExt;
+    if (cutVA + cutVB > cutSideExt - 1e-4f) return std::nullopt;
+
+    // Compute brush AABB from all verts (we use AABB for Z extrusion).
+    float xMin = std::numeric_limits<float>::infinity();
+    float xMax = -std::numeric_limits<float>::infinity();
+    float yMin = std::numeric_limits<float>::infinity();
+    float yMax = -std::numeric_limits<float>::infinity();
+    float zMin = std::numeric_limits<float>::infinity();
+    float zMax = -std::numeric_limits<float>::infinity();
+    for (const auto& v : verts) {
+        if (v[0] < xMin) xMin = v[0];
+        if (v[0] > xMax) xMax = v[0];
+        if (v[1] < yMin) yMin = v[1];
+        if (v[1] > yMax) yMax = v[1];
+        if (v[2] < zMin) zMin = v[2];
+        if (v[2] > zMax) zMax = v[2];
+    }
+    const float zExt = zMax - zMin;
+    const float zMid = 0.5f * (zMin + zMax);
+    if (zExt < 1e-4f) return std::nullopt;
+
+    // Compute piece layout in world XY.
+    // cutSide is the side of the XY bbox where both chamfers live.
+    // The "inward" direction (from cut side into the bbox) defines axisU.
+    // axisV lies along the cut side.
+    Vec3 axisU{ 0, 0, 0 }, axisV{ 0, 0, 0 };
+    float anchorU = 0.0f, anchorV = 0.0f;
+    float perpExt = 0.0f, alongExt = 0.0f;
+    switch (cutSide) {
+        case CutSide::Umin:
+            axisU = { +1, 0, 0 }; axisV = { 0, +1, 0 };
+            anchorU = uMin; anchorV = vMin;
+            perpExt = uExt; alongExt = vExt;
+            break;
+        case CutSide::Umax:
+            axisU = { -1, 0, 0 }; axisV = { 0, +1, 0 };
+            anchorU = uMax; anchorV = vMin;
+            perpExt = uExt; alongExt = vExt;
+            break;
+        case CutSide::Vmin:
+            axisU = { 0, +1, 0 }; axisV = { +1, 0, 0 };
+            anchorU = vMin; anchorV = uMin;
+            perpExt = vExt; alongExt = uExt;
+            break;
+        case CutSide::Vmax:
+            axisU = { 0, -1, 0 }; axisV = { +1, 0, 0 };
+            anchorU = vMax; anchorV = uMin;
+            perpExt = vExt; alongExt = uExt;
+            break;
+    }
+    // Determine which chamfer is near alongV=0 and which is near alongV=alongExt.
+    // In orderedPerimeter CCW, missA is the "first" missing corner — but we
+    // just need to know which endpoint of the cut side each cutVA/cutVB is
+    // anchored to. Use the world-space V coord of missA/missB to decide.
+    auto anchorAlongV = [&](int cornerIdx) {
+        const float cu = corners[cornerIdx].u;
+        const float cv = corners[cornerIdx].v;
+        if (cutSide == CutSide::Umin || cutSide == CutSide::Umax) {
+            return cv - anchorV;  // along +Y from vMin
+        } else {
+            return cu - anchorV;  // along +X from uMin
+        }
+    };
+    float alongA = anchorAlongV(missA);
+    float alongB = anchorAlongV(missB);
+    float cutLo = (alongA < alongB) ? cutVA : cutVB;  // cut near alongV=0
+    float cutHi = (alongA < alongB) ? cutVB : cutVA;  // cut near alongV=alongExt
+
+    // Helper: construct a Part extruded along +Z from zMin to zMax, with
+    // XY footprint = rectangle of (perpSize, alongSize) anchored at
+    // (perpOff, alongOff) from the cut-side anchor.
+    auto makePart = [&](float perpOff, float alongOff,
+                        float perpSize, float alongSize) {
+        BrushPiece bp{};
+        bp.kind = BrushPiece::Kind::Part;
+        // Center in world: anchor + (perpOff + perpSize/2)*axisU + (alongOff + alongSize/2)*axisV + zMid*Z
+        const Vec3 cUV = add(scale(axisU, perpOff + perpSize * 0.5f),
+                             scale(axisV, alongOff + alongSize * 0.5f));
+        Vec3 anchorPos{};
+        if (cutSide == CutSide::Umin || cutSide == CutSide::Umax) {
+            anchorPos = { anchorU, anchorV, zMid };
+        } else {
+            anchorPos = { anchorV, anchorU, zMid };
+        }
+        const Vec3 c = add(anchorPos, cUV);
+        bp.center   = { c.x, c.y, c.z };
+        // Size: axisU dominates one XY dimension, axisV the other. For
+        // Parts (axis-aligned), we can report size directly in world axes.
+        const bool perpIsX = (cutSide == CutSide::Umin || cutSide == CutSide::Umax);
+        bp.size = perpIsX ? std::array<float, 3>{ perpSize, alongSize, zExt }
+                          : std::array<float, 3>{ alongSize, perpSize, zExt };
+        bp.rotation = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+        return bp;
+    };
+
+    // Helper: wedge filling one chamfer corner. legPerp = cutU, legAlong = cutV.
+    // alongSign = +1 if wedge sits near alongV=0 (legs toward the
+    // missing corner at alongV=0), or -1 if near alongV=alongExt.
+    // Wedge right-angle vertex in local (perp, along) coords:
+    //   - (perp=cutU, along=cutLo) for low-end chamfer (right-angle toward bbox)
+    //   - (perp=cutU, along=alongExt - cutHi) for high-end chamfer
+    auto makeWedge = [&](float rightAnglePerp, float rightAngleAlong,
+                         float legPerp, float legAlong, float alongSign) {
+        BrushPiece bp{};
+        bp.kind = BrushPiece::Kind::Wedge;
+        // axisX = +Z (prism axis, extrude up)
+        Vec3 axX{ 0, 0, 1 };
+        // axisY = -axisU (leg along perp toward cut side)
+        Vec3 axY = scale(axisU, -1.0f);
+        // axisZ = alongSign * axisV (leg along cut side toward missing corner)
+        Vec3 axZ = scale(axisV, alongSign);
+        // Right-handed check: cross(axX, axY) = axZ_check. If dot with axZ < 0, swap legs.
+        float legY = legPerp;
+        float legZ = legAlong;
+        if (dot(cross(axX, axY), axZ) < 0.0f) {
+            std::swap(axY, axZ);
+            std::swap(legY, legZ);
+        }
+        // World anchor for right-angle vertex (at zMin of extrusion).
+        const bool perpIsX = (cutSide == CutSide::Umin || cutSide == CutSide::Umax);
+        Vec3 anchorPos{};
+        if (perpIsX) {
+            anchorPos = { anchorU, anchorV, zMin };
+        } else {
+            anchorPos = { anchorV, anchorU, zMin };
+        }
+        const Vec3 raA = add(anchorPos,
+                             add(scale(axisU, rightAnglePerp),
+                                 scale(axisV, rightAngleAlong)));
+        // Bounding-box center: raA + axX*zExt/2 + axY*legY/2 + axZ*legZ/2
+        const Vec3 c = add(add(add(raA,
+                                   scale(axX, zExt * 0.5f)),
+                               scale(axY, legY * 0.5f)),
+                           scale(axZ, legZ * 0.5f));
+        bp.center = { c.x, c.y, c.z };
+        // Roblox WedgePart convention: local +Y = axisZ, local +Z = -axisY.
+        bp.size   = { zExt, legZ, legY };
+        bp.rotation = {
+            axX.x,  axZ.x, -axY.x,
+            axX.y,  axZ.y, -axY.y,
+            axX.z,  axZ.z, -axY.z,
+        };
+        return bp;
+    };
+
+    BrushDecomposition d{};
+    d.modelIndex = 0;
+    d.texname    = textureNameForBrush(bsp, brush);
+
+    // Part A: central strip on cut side, perp in [0, cutU], along in [cutLo, alongExt - cutHi].
+    d.pieces.push_back(makePart(
+        /*perpOff=*/0.0f, /*alongOff=*/cutLo,
+        /*perpSize=*/cutU, /*alongSize=*/alongExt - cutLo - cutHi));
+    // Part B: non-cut side, perp in [cutU, perpExt], along in [0, alongExt].
+    d.pieces.push_back(makePart(
+        /*perpOff=*/cutU, /*alongOff=*/0.0f,
+        /*perpSize=*/perpExt - cutU, /*alongSize=*/alongExt));
+    // Wedge low (near alongV = 0): right-angle at (cutU, cutLo), legs toward
+    // missing corner at (0, 0). Legs: legPerp=cutU (toward cut side), legAlong=cutLo.
+    d.pieces.push_back(makeWedge(
+        /*rightAnglePerp=*/cutU, /*rightAngleAlong=*/cutLo,
+        /*legPerp=*/cutU, /*legAlong=*/cutLo,
+        /*alongSign=*/-1.0f));
+    // Wedge high (near alongV = alongExt): right-angle at (cutU, alongExt - cutHi).
+    d.pieces.push_back(makeWedge(
+        /*rightAnglePerp=*/cutU, /*rightAngleAlong=*/alongExt - cutHi,
+        /*legPerp=*/cutU, /*legAlong=*/cutHi,
+        /*alongSign=*/+1.0f));
+
+    return d;
+}
+
 } // namespace bsp2rbx
