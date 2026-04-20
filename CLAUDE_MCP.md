@@ -140,6 +140,46 @@ or
    ```
 4. Launch yquake2 with `+set mcp_server_port 28910`.
 
+## Driving a map as a noclip spectator
+
+To teleport / setangles around a map for reference shots, commands must
+run in this order:
+
+1. `set cheats 1` — enable cheats on the server. Must be set **before**
+   `map`: `cheats` is a `CVAR_SERVERINFO | CVAR_LATCH` cvar, so toggling
+   it mid-game has no effect until the next map load. The game DLL reads
+   it during `ClientConnect` to decide whether cheat commands are
+   registered.
+2. `map battle` — load the map. This spawns the player and connects the
+   local client, at which point cheat-gated commands (`noclip`, `give`,
+   `god`, the custom `where` / `teleport_exact` / `setangles` /
+   `setforward`) become callable.
+3. `noclip` — fly freely through geometry. Without this, `teleport_exact`
+   still works but the player falls / collides on the next frame.
+
+Single round-trip shorthand that works over the bridge:
+
+```
+q2_console("set cheats 1 ; map battle")
+q2_console("noclip")
+q2_console("cmd teleport_exact -848 -1328 480")
+q2_console("cmd setangles 0 135 0")
+```
+
+Gotchas observed in practice:
+
+- The `cmd` prefix is required for the custom game-side commands
+  (`where`, `teleport_exact`, `setangles`, `setforward`). They're
+  registered in [src/game/g_cmds.c](src/game/g_cmds.c) as client
+  commands, not engine commands.
+- `cmd where` uses `gi.cprintf` (reliable server→client message), so its
+  output does *not* appear in the `q2_console` response — it lands in
+  the client's HUD/console one frame later. To read it, `toggleconsole`
+  first, then `q2_screenshot`.
+- `cmd setangles` pitch tends to get reset to 0 on the next frame under
+  noclip because the movement code re-derives `v_angle` from input.
+  Yaw holds fine; for precise pitch, use `setforward` instead.
+
 ## Smoke test (no Claude Code, just Python + TCP)
 
 ```python
