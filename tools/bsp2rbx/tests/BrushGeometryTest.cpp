@@ -1024,6 +1024,142 @@ TEST(BrushGeometryTest, BeveledBottomBrickThrowsOnOutOfRangeIndex) {
     EXPECT_THROW(geom.brushBeveledBottomBrick(bsp, 99), std::out_of_range);
 }
 
+TEST(BrushGeometryTest, BeveledBottomBrickAsymmetricSlopesUsePerChamferZDrop) {
+    // Brick with DIFFERENT slopes on X vs Y chamfers — a regression guard
+    // for the previous bug where every wedge used the core height (max of
+    // all chamfer z-drops) as its vertical leg, instead of its own
+    // chamfer's actual z-drop. Visually, this made shallow-slope wedges
+    // look way too tall (e.g. brush 319's Y-end wedges overshot by ~50%).
+    //
+    // bbox: x in [0, 10], y in [0, 4], z in [0, 3].
+    // X chamfers are 45° cuts of size 2: z_start_X = 2 (from z_top=3, drop 2)
+    // Y chamfers are 45° cuts of size 1: z_start_Y = 1 (from z_top=3, drop 1)
+    // -> z_core_top = max = 2. Top slab spans z in [2, 3].
+    //
+    // Expected decomposition (8 pieces):
+    //   - 1 top slab (full 10x4 at z in [2, 3])
+    //   - 1 core (bottom face 6x2 extruded to z in [0, 2])
+    //   - 2 X-wedges with prism=bot_ysize=2, legs=2x2 (z-drop matches X)
+    //   - 2 Y-wedges with prism=bot_xsize=6, legs=1x1 (z-drop matches Y —
+    //     NOT 2, which was the old bug)
+    //   - 2 Y side-top boxes filling z in [1, 2] above each Y wedge
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0  }, { 1, 0, 0, 10 },
+        { 0,-1, 0, 0  }, { 0, 1, 0, 4  },
+        { 0, 0,-1, 0  }, { 0, 0, 1, 3  },
+        {  r2,  0, -r2,  8 * r2 },   // +X chamfer (10,2) -> (8,0)
+        { -r2,  0, -r2, -2 * r2 },   // -X chamfer (0,2)  -> (2,0)
+        {  0,  r2, -r2,  3 * r2 },   // +Y chamfer (4,1)  -> (3,0)
+        {  0, -r2, -r2, -r2     },   // -Y chamfer (0,1)  -> (1,0)
+    });
+    BrushGeometry geom;
+    const auto dOpt = geom.brushBeveledBottomBrick(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    const auto& d = *dOpt;
+
+    ASSERT_EQ(d.pieces.size(), 8u);
+    int parts = 0, wedges = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind == BrushPiece::Kind::Part) ++parts;
+        else if (p.kind == BrushPiece::Kind::Wedge) ++wedges;
+    }
+    EXPECT_EQ(parts, 4);   // top slab + core + 2 Y side-top boxes
+    EXPECT_EQ(wedges, 4);  // 4 side wedges
+
+    // Verify wedge dimensions match each chamfer's OWN z-drop. The prism
+    // axis is along the perpendicular edge: X-chamfer wedges extrude
+    // along Y (size[0] = bot_ysize = 2); Y-chamfer wedges extrude along X
+    // (size[0] = bot_xsize = 6).
+    int xWedgesWithLegs2 = 0, yWedgesWithLegs1 = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind != BrushPiece::Kind::Wedge) continue;
+        if (std::fabs(p.size[0] - 2.0f) < 0.01f) {
+            // X-chamfer wedge (prism along Y). Legs must both be 2.
+            EXPECT_NEAR(p.size[1], 2.0f, 0.01f);
+            EXPECT_NEAR(p.size[2], 2.0f, 0.01f);
+            ++xWedgesWithLegs2;
+        } else if (std::fabs(p.size[0] - 6.0f) < 0.01f) {
+            // Y-chamfer wedge (prism along X). Legs must both be 1 —
+            // MATCHING the Y chamfer's 1-unit z-drop, NOT the 2-unit
+            // core height (the old bug).
+            EXPECT_NEAR(p.size[1], 1.0f, 0.01f)
+                << "Y-wedge vertical leg should equal Y chamfer's z-drop (1), "
+                << "not the core height (2)";
+            EXPECT_NEAR(p.size[2], 1.0f, 0.01f);
+            ++yWedgesWithLegs1;
+        } else {
+            ADD_FAILURE() << "unexpected wedge prismLen=" << p.size[0];
+        }
+    }
+    EXPECT_EQ(xWedgesWithLegs2, 2);
+    EXPECT_EQ(yWedgesWithLegs1, 2);
+
+    // There must be 2 Y-side-top-box Parts filling z in [1, 2] on the
+    // +Y and -Y edges: size (bot_xsize=6) x (delta_y=1) x (gap=1).
+    int ySideTopBoxes = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind != BrushPiece::Kind::Part) continue;
+        if (std::fabs(p.size[0] - 6.0f) < 0.01f &&
+            std::fabs(p.size[1] - 1.0f) < 0.01f &&
+            std::fabs(p.size[2] - 1.0f) < 0.01f &&
+            std::fabs(p.center[2] - 1.5f) < 0.01f) {
+            ++ySideTopBoxes;
+        }
+    }
+    EXPECT_EQ(ySideTopBoxes, 2);
+}
+
+TEST(BrushGeometryTest, BeveledBottomBrickAsymmetricXSlopesEmitCornerTopBoxes) {
+    // Brick with ASYMMETRIC X chamfers: +X chamfer cuts 2.5 from the top
+    // while -X cuts 2. This makes z_start_+X = 2.5 but z_start_-X = 2,
+    // so z_core_top = 2.5 (the max). The two corners that INCLUDE the
+    // -X chamfer (-X/+Y and -X/-Y) have "corner safe" z = max(2, 1) = 2,
+    // which is < z_core_top = 2.5, so each emits a corner-top box filling
+    // z in [2, 2.5] over that corner's XY rectangle.
+    //
+    // This regression-guards the "corner gap" bug where corners were left
+    // uncovered, showing through-the-bridge visual holes in views like
+    // position #1 and #4.
+    const float r2 = std::sqrt(0.5f);
+    Bsp bsp;
+    const int bi = addCustomBrush(bsp, {
+        { -1, 0, 0, 0  }, { 1, 0, 0, 10 },
+        { 0,-1, 0, 0  }, { 0, 1, 0, 4  },
+        { 0, 0,-1, 0  }, { 0, 0, 1, 3  },
+        {  r2,  0, -r2,  7.5f * r2 },  // +X (10, 2.5) -> (7.5, 0), z_start=2.5
+        { -r2,  0, -r2, -2 * r2   },  // -X (0, 2)    -> (2, 0),   z_start=2
+        {  0,  r2, -r2,  3 * r2   },  // +Y (4, 1)    -> (3, 0),   z_start=1
+        {  0, -r2, -r2, -r2       },  // -Y (0, 1)    -> (1, 0),   z_start=1
+    });
+    BrushGeometry geom;
+    const auto dOpt = geom.brushBeveledBottomBrick(bsp, bi);
+    ASSERT_TRUE(dOpt.has_value());
+    const auto& d = *dOpt;
+
+    // Find corner-top boxes: small Parts at x in [0, 2] (the -X edge
+    // strip), y either in [0, 1] or [3, 4], z in [2, 2.5]. Each has size
+    // (delta_x_neg=2) x (delta_y=1) x (gap=0.5).
+    int cornerTopBoxes = 0;
+    for (const auto& p : d.pieces) {
+        if (p.kind != BrushPiece::Kind::Part) continue;
+        // Corner-top box has z-height 0.5 centered at z=2.25.
+        if (std::fabs(p.size[2] - 0.5f) > 0.01f) continue;
+        if (std::fabs(p.center[2] - 2.25f) > 0.01f) continue;
+        if (std::fabs(p.size[0] - 2.0f) > 0.01f) continue;  // delta_x_neg = 2
+        if (std::fabs(p.size[1] - 1.0f) > 0.01f) continue;  // delta_y = 1
+        // Should be centered at x=1 (middle of [0, 2]) and either y=0.5 or y=3.5.
+        EXPECT_NEAR(p.center[0], 1.0f, 0.01f);
+        const bool atPosY = std::fabs(p.center[1] - 3.5f) < 0.01f;
+        const bool atNegY = std::fabs(p.center[1] - 0.5f) < 0.01f;
+        EXPECT_TRUE(atPosY || atNegY);
+        ++cornerTopBoxes;
+    }
+    EXPECT_EQ(cornerTopBoxes, 2)
+        << "expected 2 corner-top boxes at the -X/+Y and -X/-Y corners";
+}
+
 TEST(BrushGeometryTest, ChamferedBeamThrowsOnOutOfRangeIndex) {
     Bsp bsp = buildAxisAlignedCubeBsp(-1, 1, -1, 1, -1, 1);
     BrushGeometry geom;
